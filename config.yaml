@@ -1,0 +1,18 @@
+server:
+  host: 127.0.0.1
+  port: 8081
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  db: 0
+
+storage:
+  data_dir: ./data
+
+docker:
+  host: unix:///var/run/docker.sock
+
+security:
+  default_token: agentainer-default-token
