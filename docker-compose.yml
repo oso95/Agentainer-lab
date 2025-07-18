@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  agentainer:
+    build: .
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/app/data
+    environment:
+      - AGENTAINER_REDIS_HOST=redis
+      - AGENTAINER_REDIS_PORT=6379
+      - AGENTAINER_DOCKER_HOST=unix:///var/run/docker.sock
+      - AGENTAINER_STORAGE_DATA_DIR=/app/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
