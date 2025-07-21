@@ -102,6 +102,9 @@
 - **Go** 1.21 or higher
 - **Docker** and Docker Compose
 - **Redis** (or use Docker Compose)
+- **Git** (for cloning the repository)
+
+> **Note**: The setup.sh script can install all prerequisites automatically on fresh Ubuntu/Debian VMs.
 
 ### Installation
 
@@ -109,11 +112,12 @@
 <summary><b>Option 1: Quick Install (Recommended)</b></summary>
 
 ```bash
-# Clone the repository
+# For fresh VMs - installs all prerequisites (Git, Go, Docker, Docker Compose)
+curl -fsSL https://raw.githubusercontent.com/oso95/Agentainer-lab/main/setup.sh | bash
+
+# Or if you already have prerequisites:
 git clone https://github.com/oso95/Agentainer-lab.git
 cd agentainer-lab
-
-# Run the installation script
 ./install.sh
 
 # Update your PATH
