@@ -31,7 +31,7 @@
 **Agentainer Lab** is a lightweight runtime that transforms LLM-based agents into containerized microservices. Deploy, manage, and scale your AI agents with the same ease as traditional web services—no frontend required.
 
 <div align="center">
-  <img width="800" alt="Agentainer Architecture" src="https://via.placeholder.com/800x400/1a1a2e/16213e?text=Agentainer+Architecture+Diagram">
+  <img width="1272" height="1174" alt="image" src="https://github.com/user-attachments/assets/2d6f894c-7321-417b-ad8d-053b92669658" />
 </div>
 
 ### ✨ Key Features
