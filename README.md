@@ -169,9 +169,10 @@ agentainer deploy --name my-first-agent --image nginx:latest
 # Start the agent
 agentainer start <agent-id>
 
-# Access your agent
-# Direct: http://localhost:9001
-# Proxy:  http://localhost:8081/agent/<agent-id>/
+# Access your agent (three methods):
+# Direct: http://localhost:9001                      # Direct to container
+# Proxy:  http://localhost:8081/agent/<agent-id>/    # Through proxy
+# API:    http://localhost:8081/agents/<agent-id>    # Get agent info
 ```
 
 ---
@@ -258,7 +259,7 @@ agentainer deploy \
 
 ### 🌐 Access Methods
 
-Agents can be accessed two ways:
+Agents can be accessed three ways:
 
 1. **Direct Access**: `http://localhost:<port>`
    ```bash
@@ -268,8 +269,15 @@ Agents can be accessed two ways:
 
 2. **Proxy Access** (Recommended): `http://localhost:8081/agent/<id>/`
    ```bash
-   # Consistent URL pattern
+   # Routes to agent's internal endpoints
    curl http://localhost:8081/agent/agent-123/api/status
+   ```
+
+3. **API Access**: `http://localhost:8081/agents/<id>`
+   ```bash
+   # Get agent information via REST API
+   curl http://localhost:8081/agents/agent-123 \
+     -H "Authorization: Bearer agentainer-default-token"
    ```
 
 ---

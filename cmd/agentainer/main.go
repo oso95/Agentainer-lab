@@ -323,10 +323,11 @@ func deployAgent(cmd *cobra.Command) {
 		for _, port := range agentObj.Ports {
 			fmt.Printf("  %d:%d/%s\n", port.HostPort, port.ContainerPort, port.Protocol)
 		}
-		// Show proxy URL for easy access
-		fmt.Printf("\nAgent accessible via:\n")
+		// Show all access methods
+		fmt.Printf("\nAccess methods:\n")
 		fmt.Printf("  Direct: http://localhost:%d\n", agentObj.Ports[0].HostPort)
 		fmt.Printf("  Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+		fmt.Printf("  API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
 	}
 	if len(agentObj.Volumes) > 0 {
 		fmt.Printf("Volume mappings:\n")
@@ -456,7 +457,9 @@ func listAgents() {
 		}
 		fmt.Printf("%-20s %-20s %-30s %-10s %-8s\n", agentObj.ID, agentObj.Name, agentObj.Image, agentObj.Status, port)
 		if agentObj.Status == agent.StatusRunning && len(agentObj.Ports) > 0 {
-			fmt.Printf("  → Proxy URL: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+			fmt.Printf("  → Direct: http://localhost:%s\n", port)
+			fmt.Printf("  → Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+			fmt.Printf("  → API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
 		}
 	}
 }
