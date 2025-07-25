@@ -435,7 +435,8 @@ func viewLogs(cmd *cobra.Command, agentID string) {
 func listAgents() {
 	agentMgr := createAgentManager()
 	
-	agents, err := agentMgr.ListAgents()
+	// CLI lists all agents regardless of token
+	agents, err := agentMgr.ListAgents("")
 	if err != nil {
 		log.Fatalf("Failed to list agents: %v", err)
 	}

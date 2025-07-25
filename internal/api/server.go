@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -149,7 +150,8 @@ func (s *Server) deployAgentHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAgentsHandler(w http.ResponseWriter, r *http.Request) {
-	agents, err := s.agentMgr.ListAgents()
+	// API lists all agents regardless of token (same as CLI)
+	agents, err := s.agentMgr.ListAgents("")
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to list agents: %v", err))
 		return
@@ -161,6 +163,7 @@ func (s *Server) listAgentsHandler(w http.ResponseWriter, r *http.Request) {
 		Data:    agents,
 	})
 }
+
 
 func (s *Server) getAgentHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -373,7 +376,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), "authToken", token)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

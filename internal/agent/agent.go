@@ -321,8 +321,26 @@ func (m *Manager) GetAgent(agentID string) (*Agent, error) {
 	return nil, fmt.Errorf("agent not found")
 }
 
-func (m *Manager) ListAgents() ([]Agent, error) {
-	return m.loadAgents()
+func (m *Manager) ListAgents(token string) ([]Agent, error) {
+	allAgents, err := m.loadAgents()
+	if err != nil {
+		return nil, err
+	}
+	
+	// If no token provided, return all agents (for CLI usage)
+	if token == "" {
+		return allAgents, nil
+	}
+	
+	// Filter agents by token
+	var filteredAgents []Agent
+	for _, agent := range allAgents {
+		if agent.Token == token {
+			filteredAgents = append(filteredAgents, agent)
+		}
+	}
+	
+	return filteredAgents, nil
 }
 
 func (m *Manager) GetLogs(ctx context.Context, agentID string, follow bool) (io.ReadCloser, error) {

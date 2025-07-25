@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -55,12 +56,23 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("redis.port", 6379)
 	viper.SetDefault("redis.password", "")
 	viper.SetDefault("redis.db", 0)
-	viper.SetDefault("storage.data_dir", "./data")
+	// Use home directory for data by default
+	homeDir, _ := os.UserHomeDir()
+	defaultDataDir := filepath.Join(homeDir, ".agentainer", "data")
+	viper.SetDefault("storage.data_dir", defaultDataDir)
 	viper.SetDefault("docker.host", "unix:///var/run/docker.sock")
 	viper.SetDefault("security.default_token", "agentainer-default-token")
 
 	viper.SetEnvPrefix("AGENTAINER")
 	viper.AutomaticEnv()
+	
+	// Explicitly bind environment variables
+	viper.BindEnv("redis.host", "AGENTAINER_REDIS_HOST")
+	viper.BindEnv("redis.port", "AGENTAINER_REDIS_PORT")
+	viper.BindEnv("server.host", "AGENTAINER_SERVER_HOST")
+	viper.BindEnv("server.port", "AGENTAINER_SERVER_PORT")
+	viper.BindEnv("storage.data_dir", "AGENTAINER_STORAGE_DATA_DIR")
+	viper.BindEnv("docker.host", "AGENTAINER_DOCKER_HOST")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -70,6 +82,15 @@ func LoadConfig() (*Config, error) {
 
 	if err := viper.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Expand tilde in data directory path
+	if strings.HasPrefix(config.Storage.DataDir, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+		config.Storage.DataDir = filepath.Join(homeDir, config.Storage.DataDir[2:])
 	}
 
 	if err := os.MkdirAll(config.Storage.DataDir, 0755); err != nil {

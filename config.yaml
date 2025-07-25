@@ -9,7 +9,7 @@ redis:
   db: 0
 
 storage:
-  data_dir: ./data
+  data_dir: ~/.agentainer/data
 
 docker:
   host: unix:///var/run/docker.sock

@@ -19,6 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/app/data
     environment:
+      - AGENTAINER_SERVER_HOST=0.0.0.0
       - AGENTAINER_REDIS_HOST=redis
       - AGENTAINER_REDIS_PORT=6379
       - AGENTAINER_DOCKER_HOST=unix:///var/run/docker.sock
