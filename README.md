@@ -336,29 +336,183 @@ curl http://localhost:8081/agents/{id}/logs?follow=true \
 
 ## 🎯 Examples
 
-### State Persistence Pattern
+### Building Resilient Agents
+
+Agentainer supports building production-ready agents with automatic recovery and state persistence. Here are proven patterns for implementing resilient agent logic:
+
+#### State Persistence Pattern
 
 ```python
-# In your agent code
+# StatefulAgent: Maintains state across restarts
 import json
 import os
+from datetime import datetime
 
 class StatefulAgent:
     def __init__(self):
-        self.state_file = '/app/data/state.json'
+        self.state_dir = '/app/data'
+        self.state_file = os.path.join(self.state_dir, 'state.json')
         self.load_state()
-    
+
     def load_state(self):
+        """Load state from persistent storage"""
         if os.path.exists(self.state_file):
             with open(self.state_file, 'r') as f:
                 self.state = json.load(f)
         else:
-            self.state = {"tasks": [], "config": {}}
-    
+            self.state = {
+                "processed_count": 0,
+                "last_run": None,
+                "config": {},
+                "history": []
+            }
+
     def save_state(self):
-        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+        """Save state to persistent storage"""
+        os.makedirs(self.state_dir, exist_ok=True)
         with open(self.state_file, 'w') as f:
-            json.dump(self.state, f)
+            json.dump(self.state, f, indent=2)
+
+    def process(self, data):
+        # Update state
+        self.state["processed_count"] += 1
+        self.state["last_run"] = datetime.now().isoformat()
+        self.state["history"].append({
+            "timestamp": datetime.now().isoformat(),
+            "data": data
+        })
+
+        # Save immediately for persistence
+        self.save_state()
+```
+
+#### Auto-Recovery Pattern
+
+```python
+# SelfHealingAgent: Recovers from interruptions gracefully
+import signal
+import sys
+import json
+import os
+
+class SelfHealingAgent:
+    def __init__(self):
+        # Set up signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self.handle_shutdown)
+        signal.signal(signal.SIGINT, self.handle_shutdown)
+
+        # Initialize state
+        self.last_processed = None
+        self.pending_tasks = []
+        self.current_state = {}
+
+        # Load previous state
+        self.load_checkpoint()
+
+    def handle_shutdown(self, signum, frame):
+        """Save state before shutdown"""
+        print(f"Received signal {signum}, saving checkpoint...")
+        self.save_checkpoint()
+        sys.exit(0)
+
+    def save_checkpoint(self):
+        """Save current progress"""
+        checkpoint = {
+            "last_processed": self.last_processed,
+            "queue": self.pending_tasks,
+            "state": self.current_state
+        }
+        os.makedirs('/app/data', exist_ok=True)
+        with open('/app/data/checkpoint.json', 'w') as f:
+            json.dump(checkpoint, f)
+
+    def load_checkpoint(self):
+        """Resume from last checkpoint"""
+        if os.path.exists('/app/data/checkpoint.json'):
+            with open('/app/data/checkpoint.json', 'r') as f:
+                checkpoint = json.load(f)
+                self.last_processed = checkpoint.get('last_processed')
+                self.pending_tasks = checkpoint.get('queue', [])
+                self.current_state = checkpoint.get('state', {})
+                print(f"Resumed from checkpoint: {len(self.pending_tasks)} tasks pending")
+```
+
+#### Redis-Based Distributed State
+
+```python
+# For agents that need distributed state management
+import redis
+import json
+
+class DistributedAgent:
+    def __init__(self, agent_id):
+        self.agent_id = agent_id
+        self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
+        self.state_key = f'agent:{self.agent_id}:state'
+        
+    def save_state(self, state):
+        """Save state to Redis"""
+        self.redis.set(self.state_key, json.dumps(state))
+        # Optional: Set expiration for temporary state
+        # self.redis.expire(self.state_key, 3600)  # 1 hour
+        
+    def load_state(self):
+        """Load state from Redis"""
+        state_data = self.redis.get(self.state_key)
+        return json.loads(state_data) if state_data else {}
+        
+    def publish_event(self, event_type, data):
+        """Publish events for inter-agent communication"""
+        channel = f'agent:events:{event_type}'
+        self.redis.publish(channel, json.dumps({
+            'agent_id': self.agent_id,
+            'data': data
+        }))
+```
+
+#### Deployment with Persistence
+
+```bash
+# Deploy an agent with persistent volume for state
+agentainer deploy \
+  --name resilient-agent \
+  --image my-agent:latest \
+  --volume /host/agent-data:/app/data \
+  --env AGENT_ID=agent-001 \
+  --auto-restart
+
+# The agent will:
+# - Save state to /app/data (persisted on host)
+# - Automatically restart on failure
+# - Resume from last checkpoint on startup
+```
+
+#### Health Check Implementation
+
+```python
+# Implement health checks for automatic recovery
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    """Health endpoint for Agentainer monitoring"""
+    try:
+        # Check critical components
+        if not check_database_connection():
+            return jsonify({"status": "unhealthy", "reason": "database"}), 503
+            
+        if not check_queue_status():
+            return jsonify({"status": "unhealthy", "reason": "queue"}), 503
+            
+        return jsonify({
+            "status": "healthy",
+            "uptime": get_uptime(),
+            "processed": get_processed_count()
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 503
 ```
 
 ### Multi-Agent Deployment
