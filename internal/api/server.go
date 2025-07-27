@@ -16,6 +16,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/agentainer/agentainer-lab/internal/agent"
 	"github.com/agentainer/agentainer-lab/internal/config"
+	"github.com/agentainer/agentainer-lab/internal/health"
+	"github.com/agentainer/agentainer-lab/internal/logging"
 	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
@@ -27,6 +29,7 @@ type Server struct {
 	storage          *storage.Storage
 	metricsCollector *metrics.Collector
 	requestMgr       *requests.Manager
+	healthMonitor    *health.Monitor
 }
 
 type DeployRequest struct {
@@ -39,6 +42,7 @@ type DeployRequest struct {
 	Token       string                 `json:"token"`
 	Ports       []agent.PortMapping    `json:"ports"`
 	Volumes     []agent.VolumeMapping  `json:"volumes"`
+	HealthCheck *agent.HealthCheckConfig `json:"health_check,omitempty"`
 }
 
 type Response struct {
@@ -54,6 +58,7 @@ func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.
 		storage:          storage,
 		metricsCollector: metricsCollector,
 		requestMgr:       requests.NewManager(redisClient),
+		healthMonitor:    health.NewMonitor(agentMgr, redisClient),
 	}
 }
 
@@ -79,6 +84,16 @@ func (s *Server) Start() error {
 	r.HandleFunc("/agents/{id}/requests/{reqId}", s.getRequestHandler).Methods("GET")
 	r.HandleFunc("/agents/{id}/requests/{reqId}/replay", s.replayRequestHandler).Methods("POST")
 	
+	// Health monitoring endpoints
+	r.HandleFunc("/agents/{id}/health", s.getAgentHealthHandler).Methods("GET")
+	r.HandleFunc("/health/agents", s.getAllHealthStatusesHandler).Methods("GET")
+	
+	// Metrics endpoints
+	r.HandleFunc("/agents/{id}/metrics/history", s.getMetricsHistoryHandler).Methods("GET")
+	
+	// Web UI
+	r.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("/app/web"))))
+	
 	// Proxy routes - catch-all for agent requests
 	r.PathPrefix("/agent/{id}/").HandlerFunc(s.proxyToAgentHandler)
 
@@ -98,6 +113,20 @@ func (s *Server) Start() error {
 	fmt.Println("   - Do NOT expose to external networks")
 	fmt.Println("🚨 ================================================")
 	fmt.Printf("Server starting on %s\n", addr)
+	
+	// Start health monitoring
+	go func() {
+		if err := s.healthMonitor.Start(context.Background()); err != nil {
+			fmt.Printf("Failed to start health monitor: %v\n", err)
+		}
+	}()
+	
+	// Start metrics collection
+	go func() {
+		if err := s.metricsCollector.Start(context.Background()); err != nil {
+			fmt.Printf("Failed to start metrics collector: %v\n", err)
+		}
+	}()
 	
 	return http.ListenAndServe(addr, r)
 }
@@ -147,11 +176,49 @@ func (s *Server) deployAgentHandler(w http.ResponseWriter, r *http.Request) {
 		req.Token = s.config.Security.DefaultToken
 	}
 
-	agent, err := s.agentMgr.Deploy(r.Context(), req.Name, req.Image, req.EnvVars, req.CPULimit, req.MemoryLimit, req.AutoRestart, req.Token, req.Ports, req.Volumes)
+	agent, err := s.agentMgr.Deploy(r.Context(), req.Name, req.Image, req.EnvVars, req.CPULimit, req.MemoryLimit, req.AutoRestart, req.Token, req.Ports, req.Volumes, req.HealthCheck)
 	if err != nil {
+		// Log error
+		logging.Error("api", "Failed to deploy agent", map[string]interface{}{
+			"name": req.Name,
+			"image": req.Image,
+			"error": err.Error(),
+		})
+		
+		// Audit log
+		logging.AuditLog(logging.AuditEntry{
+			UserID:     s.getUserID(r),
+			Action:     "deploy_agent",
+			Resource:   "agent",
+			ResourceID: req.Name,
+			Result:     "failure",
+			Details:    map[string]interface{}{"error": err.Error()},
+			IP:         s.getClientIP(r),
+			UserAgent:  r.UserAgent(),
+		})
+		
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to deploy agent: %v", err))
 		return
 	}
+
+	// Log success
+	logging.Info("api", "Agent deployed successfully", map[string]interface{}{
+		"agent_id": agent.ID,
+		"name": agent.Name,
+		"image": agent.Image,
+	})
+	
+	// Audit log
+	logging.AuditLog(logging.AuditEntry{
+		UserID:     s.getUserID(r),
+		Action:     "deploy_agent",
+		Resource:   "agent",
+		ResourceID: agent.ID,
+		Result:     "success",
+		Details:    map[string]interface{}{"name": agent.Name, "image": agent.Image},
+		IP:         s.getClientIP(r),
+		UserAgent:  r.UserAgent(),
+	})
 
 	s.sendResponse(w, http.StatusCreated, Response{
 		Success: true,
@@ -206,6 +273,18 @@ func (s *Server) startAgentHandler(w http.ResponseWriter, r *http.Request) {
 	if err := s.agentMgr.Start(r.Context(), agentID); err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start agent: %v", err))
 		return
+	}
+
+	// Start health monitoring if configured
+	agent, _ := s.agentMgr.GetAgent(agentID)
+	if agent != nil && agent.HealthCheck != nil {
+		config := health.CheckConfig{
+			Endpoint: agent.HealthCheck.Endpoint,
+			Interval: parseDuration(agent.HealthCheck.Interval, 30*time.Second),
+			Timeout:  parseDuration(agent.HealthCheck.Timeout, 5*time.Second),
+			Retries:  agent.HealthCheck.Retries,
+		}
+		s.healthMonitor.StartMonitoring(agentID, config)
 	}
 
 	s.sendResponse(w, http.StatusOK, Response{
@@ -348,7 +427,7 @@ func (s *Server) getMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	agentID := vars["id"]
 
-	metrics, err := s.metricsCollector.GetAgentMetrics(r.Context(), agentID)
+	metrics, err := s.metricsCollector.GetMetrics(agentID)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get metrics: %v", err))
 		return
@@ -363,7 +442,7 @@ func (s *Server) getMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || strings.HasPrefix(r.URL.Path, "/web/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -665,4 +744,115 @@ func (s *Server) replayRequestHandler(w http.ResponseWriter, r *http.Request) {
 			"status_code": resp.StatusCode,
 		},
 	})
+}
+
+func (s *Server) getAgentHealthHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	agentID := vars["id"]
+	
+	status, err := s.healthMonitor.GetStatus(agentID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "No health data for agent")
+		return
+	}
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "Agent health status",
+		Data:    status,
+	})
+}
+
+func (s *Server) getAllHealthStatusesHandler(w http.ResponseWriter, r *http.Request) {
+	statuses := s.healthMonitor.GetAllStatuses()
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "All agent health statuses",
+		Data:    statuses,
+	})
+}
+
+func (s *Server) getMetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	agentID := vars["id"]
+	
+	// Parse duration parameter (default: 1 hour)
+	durationStr := r.URL.Query().Get("duration")
+	duration := 1 * time.Hour
+	if durationStr != "" {
+		if d, err := time.ParseDuration(durationStr); err == nil {
+			duration = d
+		}
+	}
+	
+	// Limit to 24 hours max
+	if duration > 24*time.Hour {
+		duration = 24 * time.Hour
+	}
+	
+	history, err := s.metricsCollector.GetMetricsHistory(agentID, duration)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get metrics history: %v", err))
+		return
+	}
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "Metrics history retrieved successfully",
+		Data: map[string]interface{}{
+			"agent_id": agentID,
+			"duration": duration.String(),
+			"metrics":  history,
+		},
+	})
+}
+
+// parseDuration parses a duration string, returning defaultDur if parsing fails
+func parseDuration(s string, defaultDur time.Duration) time.Duration {
+	if s == "" {
+		return defaultDur
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultDur
+	}
+	return dur
+}
+
+// getUserID extracts user ID from the request (from token)
+func (s *Server) getUserID(r *http.Request) string {
+	// In a real implementation, you'd decode the JWT token
+	// For now, just use the token as user ID
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return "anonymous"
+}
+
+// getClientIP extracts the client IP from the request
+func (s *Server) getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		// Use the first IP in the chain
+		ips := strings.Split(forwarded, ",")
+		return strings.TrimSpace(ips[0])
+	}
+	
+	// Check X-Real-IP header
+	realIP := r.Header.Get("X-Real-IP")
+	if realIP != "" {
+		return realIP
+	}
+	
+	// Fall back to RemoteAddr
+	ip := r.RemoteAddr
+	// Remove port if present
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	
+	return ip
 }

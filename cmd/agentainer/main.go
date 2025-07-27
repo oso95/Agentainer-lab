@@ -17,9 +17,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/agentainer/agentainer-lab/internal/agent"
 	"github.com/agentainer/agentainer-lab/internal/api"
+	"github.com/agentainer/agentainer-lab/internal/backup"
 	"github.com/agentainer/agentainer-lab/internal/config"
+	"github.com/agentainer/agentainer-lab/internal/logging"
 	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
+	"github.com/agentainer/agentainer-lab/internal/sync"
 	"github.com/agentainer/agentainer-lab/pkg/docker"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
 )
@@ -229,8 +232,34 @@ func init() {
 	deployCmd.Flags().StringP("token", "t", "", "Agent token")
 	deployCmd.Flags().StringSliceP("port", "p", []string{}, "DEPRECATED: Port mappings are no longer supported. All access is through proxy.")
 	deployCmd.Flags().StringSliceP("volume", "v", []string{}, "Volume mappings (host:container[:ro], e.g., ./data:/app/data or ./config:/app/config:ro)")
+	deployCmd.Flags().String("health-endpoint", "/health", "Health check endpoint path")
+	deployCmd.Flags().String("health-interval", "30s", "Health check interval")
+	deployCmd.Flags().String("health-timeout", "5s", "Health check timeout")
+	deployCmd.Flags().Int("health-retries", 3, "Health check retry count before restart")
 
 	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
+	
+	metricsCmd.Flags().BoolP("history", "H", false, "Show metrics history")
+	metricsCmd.Flags().StringP("duration", "d", "1h", "History duration (e.g., 30m, 1h, 6h, 24h)")
+	
+	backupCreateCmd.Flags().StringP("name", "n", "", "Backup name (required)")
+	backupCreateCmd.Flags().StringP("description", "d", "", "Backup description")
+	backupCreateCmd.Flags().StringSliceP("agents", "a", []string{}, "Specific agents to backup (default: all)")
+	backupCreateCmd.MarkFlagRequired("name")
+	
+	backupRestoreCmd.Flags().StringSliceP("agents", "a", []string{}, "Specific agents to restore (default: all)")
+	
+	backupCmd.AddCommand(backupCreateCmd)
+	backupCmd.AddCommand(backupListCmd)
+	backupCmd.AddCommand(backupRestoreCmd)
+	backupCmd.AddCommand(backupDeleteCmd)
+	backupCmd.AddCommand(backupExportCmd)
+	
+	auditCmd.Flags().StringP("user", "u", "", "Filter by user ID")
+	auditCmd.Flags().StringP("action", "a", "", "Filter by action")
+	auditCmd.Flags().StringP("resource", "r", "", "Filter by resource type")
+	auditCmd.Flags().StringP("duration", "d", "24h", "Time duration to query")
+	auditCmd.Flags().IntP("limit", "l", 100, "Maximum number of entries to show")
 
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(deployCmd)
@@ -244,6 +273,10 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(invokeCmd)
 	rootCmd.AddCommand(requestsCmd)
+	rootCmd.AddCommand(healthCmd)
+	rootCmd.AddCommand(metricsCmd)
+	rootCmd.AddCommand(backupCmd)
+	rootCmd.AddCommand(auditCmd)
 }
 
 func runServer() {
@@ -267,8 +300,33 @@ func runServer() {
 	storage := storage.NewStorage(redisClient)
 	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
 	metricsCollector := metrics.NewCollector(dockerClient, storage)
+	
+	// Initialize logger
+	logger, err := logging.NewLogger(redisClient, "", true) // Console logging enabled
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	defer logger.Close()
+	
+	// Set global logger
+	logging.SetGlobalLogger(logger)
+	
+	logging.Info("server", "Agentainer server starting", map[string]interface{}{
+		"version": "1.0",
+		"host": cfg.Server.Host,
+		"port": cfg.Server.Port,
+	})
 
 	server := api.NewServer(cfg, agentMgr, storage, metricsCollector, redisClient)
+
+	// Start state synchronizer with more frequent updates
+	stateSynchronizer := sync.NewStateSynchronizer(dockerClient, redisClient, 10*time.Second) // Reduced from 30s to 10s
+	if err := stateSynchronizer.Start(ctx); err != nil {
+		log.Printf("Failed to start state synchronizer: %v", err)
+	} else {
+		defer stateSynchronizer.Stop()
+		log.Println("State synchronizer started - agents will be automatically synced with Docker containers every 10 seconds")
+	}
 
 	// Start replay worker if request persistence is enabled
 	if cfg.Features.RequestPersistence {
@@ -313,6 +371,80 @@ func deployAgent(cmd *cobra.Command) {
 		log.Fatal("Either --config or both --name and --image are required")
 	}
 	
+	// Create Docker client
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+	
+	// Check if image is actually a Dockerfile
+	builder := docker.NewImageBuilder(dockerClient)
+	if docker.IsDockerfile(image) {
+		fmt.Printf("Detected Dockerfile: %s\n", image)
+		
+		// Generate unique image name
+		generatedImageName := docker.GenerateImageName(name)
+		finalImageName, err := builder.PreventDuplicateImage(context.Background(), generatedImageName)
+		if err != nil {
+			log.Fatalf("Failed to generate unique image name: %v", err)
+		}
+		
+		fmt.Printf("Building Docker image: %s\n", finalImageName)
+		
+		// Create progress channel for build output
+		progressChan := make(chan string, 100)
+		buildCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		
+		// Start build progress display
+		doneChan := make(chan bool)
+		go func() {
+			spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spinIdx := 0
+			lastMsg := ""
+			
+			for {
+				select {
+				case msg, ok := <-progressChan:
+					if !ok {
+						doneChan <- true
+						return
+					}
+					// Clear previous line and print new message
+					if lastMsg != "" {
+						fmt.Printf("\r%-80s", " ") // Clear line
+					}
+					if strings.HasPrefix(msg, "Step ") || strings.HasPrefix(msg, "Successfully ") {
+						fmt.Printf("\r%s %s\n", spinner[spinIdx], msg)
+					} else {
+						fmt.Printf("\r%s %s", spinner[spinIdx], msg)
+						lastMsg = msg
+					}
+					spinIdx = (spinIdx + 1) % len(spinner)
+				case <-time.After(100 * time.Millisecond):
+					if lastMsg != "" {
+						fmt.Printf("\r%s %s", spinner[spinIdx], lastMsg)
+						spinIdx = (spinIdx + 1) % len(spinner)
+					}
+				}
+			}
+		}()
+		
+		// Build the image
+		if err := builder.BuildImage(buildCtx, image, finalImageName, progressChan); err != nil {
+			<-doneChan
+			log.Fatalf("Failed to build Docker image: %v", err)
+		}
+		
+		// Wait for progress display to finish
+		<-doneChan
+		fmt.Println() // New line after build
+		
+		// Use the built image for deployment
+		image = finalImageName
+		fmt.Printf("Using built image: %s\n\n", image)
+	}
+	
 	envVars, _ := cmd.Flags().GetStringSlice("env")
 	cpuStr, _ := cmd.Flags().GetString("cpu")
 	memoryStr, _ := cmd.Flags().GetString("memory")
@@ -320,6 +452,10 @@ func deployAgent(cmd *cobra.Command) {
 	token, _ := cmd.Flags().GetString("token")
 	portMappings, _ := cmd.Flags().GetStringSlice("port")
 	volumeMappings, _ := cmd.Flags().GetStringSlice("volume")
+	healthEndpoint, _ := cmd.Flags().GetString("health-endpoint")
+	healthInterval, _ := cmd.Flags().GetString("health-interval")
+	healthTimeout, _ := cmd.Flags().GetString("health-timeout")
+	healthRetries, _ := cmd.Flags().GetInt("health-retries")
 	
 	// Parse CPU and memory limits using the same functions as YAML
 	var cpuLimit, memoryLimit int64
@@ -362,9 +498,12 @@ func deployAgent(cmd *cobra.Command) {
 		log.Fatalf("Failed to parse volume mappings: %v", err)
 	}
 
-	dockerClient, err := docker.NewClient(cfg.Docker.Host)
-	if err != nil {
-		log.Fatalf("Failed to create Docker client: %v", err)
+	// Reuse dockerClient if already created for building
+	if dockerClient == nil {
+		dockerClient, err = docker.NewClient(cfg.Docker.Host)
+		if err != nil {
+			log.Fatalf("Failed to create Docker client: %v", err)
+		}
 	}
 
 	redisClient := redis.NewClient(&redis.Options{
@@ -375,7 +514,18 @@ func deployAgent(cmd *cobra.Command) {
 
 	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
 
-	agentObj, err := agentMgr.Deploy(context.Background(), name, image, envMap, cpuLimit, memoryLimit, autoRestart, token, ports, volumes)
+	// Create health check config
+	var healthCheck *agent.HealthCheckConfig
+	if healthEndpoint != "" {
+		healthCheck = &agent.HealthCheckConfig{
+			Endpoint: healthEndpoint,
+			Interval: healthInterval,
+			Timeout:  healthTimeout,
+			Retries:  healthRetries,
+		}
+	}
+
+	agentObj, err := agentMgr.Deploy(context.Background(), name, image, envMap, cpuLimit, memoryLimit, autoRestart, token, ports, volumes, healthCheck)
 	if err != nil {
 		log.Fatalf("Failed to deploy agent: %v", err)
 	}
@@ -549,6 +699,102 @@ func createAgentManager() *agent.Manager {
 	return agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
 }
 
+var healthCmd = &cobra.Command{
+	Use:   "health [agent-id]",
+	Short: "Get health status of an agent",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if len(args) == 0 {
+			viewAllHealthStatuses()
+		} else {
+			viewAgentHealth(args[0])
+		}
+	},
+}
+
+var metricsCmd = &cobra.Command{
+	Use:   "metrics [agent-id]",
+	Short: "Get resource metrics for an agent",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		history, _ := cmd.Flags().GetBool("history")
+		duration, _ := cmd.Flags().GetString("duration")
+		
+		if history {
+			viewMetricsHistory(args[0], duration)
+		} else {
+			viewCurrentMetrics(args[0])
+		}
+	},
+}
+
+var backupCmd = &cobra.Command{
+	Use:   "backup",
+	Short: "Backup and restore agent configurations",
+}
+
+var backupCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a backup of agents",
+	Run: func(cmd *cobra.Command, args []string) {
+		name, _ := cmd.Flags().GetString("name")
+		description, _ := cmd.Flags().GetString("description")
+		agents, _ := cmd.Flags().GetStringSlice("agents")
+		
+		createBackup(name, description, agents)
+	},
+}
+
+var backupListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List available backups",
+	Run: func(cmd *cobra.Command, args []string) {
+		listBackups()
+	},
+}
+
+var backupRestoreCmd = &cobra.Command{
+	Use:   "restore [backup-id]",
+	Short: "Restore agents from a backup",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		agents, _ := cmd.Flags().GetStringSlice("agents")
+		restoreBackup(args[0], agents)
+	},
+}
+
+var backupDeleteCmd = &cobra.Command{
+	Use:   "delete [backup-id]",
+	Short: "Delete a backup",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		deleteBackup(args[0])
+	},
+}
+
+var backupExportCmd = &cobra.Command{
+	Use:   "export [backup-id] [output-file]",
+	Short: "Export backup as tar.gz file",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		exportBackup(args[0], args[1])
+	},
+}
+
+var auditCmd = &cobra.Command{
+	Use:   "audit",
+	Short: "View audit logs",
+	Run: func(cmd *cobra.Command, args []string) {
+		user, _ := cmd.Flags().GetString("user")
+		action, _ := cmd.Flags().GetString("action")
+		resource, _ := cmd.Flags().GetString("resource")
+		duration, _ := cmd.Flags().GetString("duration")
+		limit, _ := cmd.Flags().GetInt("limit")
+		
+		viewAuditLogs(user, action, resource, duration, limit)
+	},
+}
+
 func parsePortMappings(portMappings []string) ([]agent.PortMapping, error) {
 	var ports []agent.PortMapping
 	
@@ -694,6 +940,7 @@ func deployFromYAML(configFile string) {
 				token,
 				portMappings,
 				agentConfig.Volumes,
+				agentConfig.HealthCheck,
 			)
 			if err != nil {
 				log.Printf("Failed to deploy %s: %v", agentConfig.Name, err)
@@ -795,5 +1042,487 @@ func viewRequests(agentID string) {
 			fmt.Printf("Retries: %d/%d\n", int(retries), int(r["max_retries"].(float64)))
 		}
 		fmt.Println(strings.Repeat("-", 80))
+	}
+}
+
+func viewAgentHealth(agentID string) {
+	// Create HTTP client
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	// Make API request to get health status
+	url := fmt.Sprintf("http://localhost:%d/agents/%s/health", cfg.Server.Port, agentID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to get health status: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// Parse response
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("API error: %s", apiResp.Message)
+	}
+	
+	// Display health status
+	data, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		fmt.Println("Unexpected response format")
+		return
+	}
+	
+	fmt.Printf("Health Status for Agent %s:\n", agentID)
+	fmt.Println(strings.Repeat("-", 60))
+	fmt.Printf("Healthy: %v\n", data["healthy"])
+	fmt.Printf("Last Check: %s\n", data["last_check"])
+	if failCount, ok := data["failure_count"].(float64); ok && failCount > 0 {
+		fmt.Printf("Failure Count: %d\n", int(failCount))
+	}
+	if msg, ok := data["message"].(string); ok && msg != "" {
+		fmt.Printf("Message: %s\n", msg)
+	}
+}
+
+func viewAllHealthStatuses() {
+	// Create HTTP client
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	// Make API request to get all health statuses
+	url := fmt.Sprintf("http://localhost:%d/health/agents", cfg.Server.Port)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to get health statuses: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// Parse response
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("API error: %s", apiResp.Message)
+	}
+	
+	// Display all health statuses
+	data, ok := apiResp.Data.(map[string]interface{})
+	if !ok || len(data) == 0 {
+		fmt.Println("No agents with health monitoring enabled")
+		return
+	}
+	
+	fmt.Println("Agent Health Status Summary:")
+	fmt.Printf("%-20s %-10s %-20s %-30s\n", "AGENT ID", "HEALTHY", "FAILURES", "LAST CHECK")
+	fmt.Println(strings.Repeat("-", 80))
+	
+	for agentID, statusData := range data {
+		status := statusData.(map[string]interface{})
+		healthy := "✓"
+		if !status["healthy"].(bool) {
+			healthy = "✗"
+		}
+		failures := int(status["failure_count"].(float64))
+		lastCheck := status["last_check"].(string)
+		
+		fmt.Printf("%-20s %-10s %-20d %-30s\n", agentID, healthy, failures, lastCheck)
+	}
+}
+
+func viewCurrentMetrics(agentID string) {
+	// Create HTTP client
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	// Make API request to get current metrics
+	url := fmt.Sprintf("http://localhost:%d/agents/%s/metrics", cfg.Server.Port, agentID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to get metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// Parse response
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("API error: %s", apiResp.Message)
+	}
+	
+	// Display metrics
+	data, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		fmt.Println("No metrics data available")
+		return
+	}
+	
+	fmt.Printf("Resource Metrics for Agent %s:\n", agentID)
+	fmt.Println(strings.Repeat("=", 60))
+	
+	// CPU metrics
+	if cpu, ok := data["cpu"].(map[string]interface{}); ok {
+		fmt.Println("\nCPU:")
+		fmt.Printf("  Usage: %.2f%%\n", cpu["usage_percent"])
+	}
+	
+	// Memory metrics
+	if mem, ok := data["memory"].(map[string]interface{}); ok {
+		fmt.Println("\nMemory:")
+		usage := mem["usage"].(float64)
+		limit := mem["limit"].(float64)
+		fmt.Printf("  Usage: %s / %s (%.2f%%)\n", 
+			formatBytes(int64(usage)), 
+			formatBytes(int64(limit)),
+			mem["usage_percent"])
+	}
+	
+	// Network metrics
+	if net, ok := data["network"].(map[string]interface{}); ok {
+		fmt.Println("\nNetwork:")
+		fmt.Printf("  RX: %s (%d packets)\n", 
+			formatBytes(int64(net["rx_bytes"].(float64))),
+			int64(net["rx_packets"].(float64)))
+		fmt.Printf("  TX: %s (%d packets)\n",
+			formatBytes(int64(net["tx_bytes"].(float64))),
+			int64(net["tx_packets"].(float64)))
+	}
+	
+	// Disk I/O metrics
+	if disk, ok := data["disk"].(map[string]interface{}); ok {
+		fmt.Println("\nDisk I/O:")
+		fmt.Printf("  Read:  %s\n", formatBytes(int64(disk["read_bytes"].(float64))))
+		fmt.Printf("  Write: %s\n", formatBytes(int64(disk["write_bytes"].(float64))))
+	}
+	
+	fmt.Printf("\nTimestamp: %s\n", data["timestamp"])
+}
+
+func viewMetricsHistory(agentID, duration string) {
+	// Create HTTP client
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	// Make API request to get metrics history
+	url := fmt.Sprintf("http://localhost:%d/agents/%s/metrics/history?duration=%s", 
+		cfg.Server.Port, agentID, duration)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to get metrics history: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// Parse response
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("API error: %s", apiResp.Message)
+	}
+	
+	// Display metrics history
+	data, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		fmt.Println("No metrics history available")
+		return
+	}
+	
+	fmt.Printf("Metrics History for Agent %s (Duration: %s):\n", agentID, data["duration"])
+	fmt.Println(strings.Repeat("=", 80))
+	
+	metrics, ok := data["metrics"].([]interface{})
+	if !ok || len(metrics) == 0 {
+		fmt.Println("No metrics data in the specified time range")
+		return
+	}
+	
+	// Display summary table
+	fmt.Printf("\n%-20s %-10s %-15s %-15s %-15s\n", "TIMESTAMP", "CPU %", "MEMORY", "NET RX", "NET TX")
+	fmt.Println(strings.Repeat("-", 80))
+	
+	for _, metric := range metrics {
+		m := metric.(map[string]interface{})
+		timestamp := m["timestamp"].(string)
+		
+		cpu := m["cpu"].(map[string]interface{})
+		cpuPercent := cpu["usage_percent"].(float64)
+		
+		mem := m["memory"].(map[string]interface{})
+		memUsage := mem["usage"].(float64)
+		memLimit := mem["limit"].(float64)
+		memPercent := (memUsage / memLimit) * 100
+		
+		net := m["network"].(map[string]interface{})
+		rxBytes := net["rx_bytes"].(float64)
+		txBytes := net["tx_bytes"].(float64)
+		
+		// Format timestamp to show only time for readability
+		t, _ := time.Parse(time.RFC3339, timestamp)
+		timeStr := t.Format("15:04:05")
+		
+		fmt.Printf("%-20s %-10.2f %-15s %-15s %-15s\n",
+			timeStr,
+			cpuPercent,
+			fmt.Sprintf("%s (%.1f%%)", formatBytes(int64(memUsage)), memPercent),
+			formatBytes(int64(rxBytes)),
+			formatBytes(int64(txBytes)))
+	}
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func createBackup(name, description string, agentIDs []string) {
+	// Create backup manager
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+	backupMgr := backup.NewManager(agentMgr, redisClient, "")
+
+	// Create backup
+	b, err := backupMgr.CreateBackup(context.Background(), name, description, agentIDs)
+	if err != nil {
+		log.Fatalf("Failed to create backup: %v", err)
+	}
+
+	fmt.Printf("Backup created successfully!\n")
+	fmt.Printf("ID: %s\n", b.ID)
+	fmt.Printf("Name: %s\n", b.Name)
+	fmt.Printf("Agents: %d\n", len(b.Agents))
+	fmt.Printf("Created: %s\n", b.CreatedAt.Format(time.RFC3339))
+}
+
+func listBackups() {
+	// Create backup manager
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+	backupMgr := backup.NewManager(agentMgr, redisClient, "")
+
+	// List backups
+	backups, err := backupMgr.ListBackups()
+	if err != nil {
+		log.Fatalf("Failed to list backups: %v", err)
+	}
+
+	if len(backups) == 0 {
+		fmt.Println("No backups found")
+		return
+	}
+
+	fmt.Printf("%-20s %-30s %-10s %-20s\n", "ID", "NAME", "AGENTS", "CREATED")
+	fmt.Println(strings.Repeat("-", 80))
+
+	for _, b := range backups {
+		fmt.Printf("%-20s %-30s %-10d %-20s\n", 
+			b.ID, 
+			b.Name,
+			len(b.Agents),
+			b.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+}
+
+func restoreBackup(backupID string, agentIDs []string) {
+	// Create backup manager
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+	backupMgr := backup.NewManager(agentMgr, redisClient, "")
+
+	// Restore backup
+	if err := backupMgr.RestoreBackup(context.Background(), backupID, agentIDs); err != nil {
+		log.Fatalf("Failed to restore backup: %v", err)
+	}
+
+	fmt.Printf("Backup %s restored successfully!\n", backupID)
+}
+
+func deleteBackup(backupID string) {
+	// Create backup manager
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+	backupMgr := backup.NewManager(agentMgr, redisClient, "")
+
+	// Delete backup
+	if err := backupMgr.DeleteBackup(backupID); err != nil {
+		log.Fatalf("Failed to delete backup: %v", err)
+	}
+
+	fmt.Printf("Backup %s deleted successfully!\n", backupID)
+}
+
+func exportBackup(backupID, outputPath string) {
+	// Create backup manager
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+	backupMgr := backup.NewManager(agentMgr, redisClient, "")
+
+	// Export backup
+	if err := backupMgr.ExportBackup(backupID, outputPath); err != nil {
+		log.Fatalf("Failed to export backup: %v", err)
+	}
+
+	fmt.Printf("Backup %s exported to %s\n", backupID, outputPath)
+}
+
+func viewAuditLogs(userID, action, resource, durationStr string, limit int) {
+	// Parse duration
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		log.Fatalf("Invalid duration: %v", err)
+	}
+	
+	// Create logger to access audit logs
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	defer redisClient.Close()
+	
+	logger, err := logging.NewLogger(redisClient, "", false)
+	if err != nil {
+		log.Fatalf("Failed to create logger: %v", err)
+	}
+	defer logger.Close()
+	
+	// Get audit logs
+	filter := logging.AuditFilter{
+		Duration: duration,
+		UserID:   userID,
+		Action:   action,
+		Resource: resource,
+		Limit:    limit,
+	}
+	
+	logs, err := logger.GetAuditLogs(context.Background(), filter)
+	if err != nil {
+		log.Fatalf("Failed to get audit logs: %v", err)
+	}
+	
+	if len(logs) == 0 {
+		fmt.Println("No audit logs found matching the criteria")
+		return
+	}
+	
+	// Display logs
+	fmt.Printf("Audit Logs (Last %s):\n", durationStr)
+	fmt.Printf("%-20s %-20s %-15s %-20s %-10s %-15s\n", "TIMESTAMP", "USER", "ACTION", "RESOURCE", "RESULT", "IP")
+	fmt.Println(strings.Repeat("-", 100))
+	
+	for _, log := range logs {
+		timestamp := log.Timestamp.Format("2006-01-02 15:04:05")
+		userDisplay := log.UserID
+		if len(userDisplay) > 18 {
+			userDisplay = userDisplay[:15] + "..."
+		}
+		
+		resourceDisplay := fmt.Sprintf("%s/%s", log.Resource, log.ResourceID)
+		if len(resourceDisplay) > 18 {
+			resourceDisplay = resourceDisplay[:15] + "..."
+		}
+		
+		fmt.Printf("%-20s %-20s %-15s %-20s %-10s %-15s\n",
+			timestamp,
+			userDisplay,
+			log.Action,
+			resourceDisplay,
+			log.Result,
+			log.IP)
 	}
 }

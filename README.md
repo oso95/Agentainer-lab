@@ -45,6 +45,7 @@
 - RESTful API with token auth
 - No frontend dependencies
 - Redis-backed state management
+- Automatic Dockerfile building
 
 </td>
 <td width="50%">
@@ -54,6 +55,7 @@
 - Internal network architecture
 - Persistent volume mounting
 - Smart proxy routing
+- Auto-sync with Docker state
 
 </td>
 </tr>
@@ -65,6 +67,7 @@
 - Universal recovery system
 - Automatic restart policies
 - State persistence across restarts
+- Real-time state synchronization
 
 </td>
 <td width="50%">
@@ -74,6 +77,7 @@
 - Crash resilience
 - Real-time container logs
 - Health check endpoints
+- Image validation & auto-build
 
 </td>
 </tr>
@@ -81,10 +85,11 @@
 
 ### 🆕 What's New
 
-- **Network Isolation**: Agents now run in isolated internal networks with no direct port exposure
+- **Automatic Dockerfile Building**: Deploy directly from Dockerfiles - Agentainer builds images automatically
+- **Real-time State Sync**: Agent states automatically sync with Docker containers every 10 seconds
+- **Image Validation**: Prevents deployment errors by validating Docker images before creating agents
+- **Network Isolation**: Agents run in isolated internal networks with no direct port exposure
 - **Request Persistence**: Automatic queuing and replay of requests to unavailable agents
-- **Crash Resilience**: Requests are preserved even if agents crash mid-processing
-- **Simplified Installation**: All operations now through unified `make` commands
 - **YAML Deployments**: Deploy multiple agents at once using YAML configuration files
 
 ---
@@ -182,8 +187,11 @@ make verify
 ### Your First Agent
 
 ```bash
-# Deploy an agent
+# Deploy from a Docker image
 agentainer deploy --name my-first-agent --image nginx:latest
+
+# Deploy from a Dockerfile (auto-builds the image!)
+agentainer deploy --name my-custom-agent --image ./Dockerfile
 
 # Or deploy multiple agents from YAML
 agentainer deploy --config examples/deployments/basic-agents.yaml
@@ -212,6 +220,16 @@ Each agent runs in complete isolation with:
 - **🚫 No Direct Ports**: No external port exposure for security
 - **💾 Persistent Storage**: Volume mounts for data persistence
 - **🔗 Unified Access**: All access through proxy at port 8081
+
+### Automatic State Synchronization
+
+Agentainer automatically keeps agent states synchronized with Docker:
+
+- **🔄 Real-time Sync**: States update every 10 seconds automatically
+- **🐳 Docker Events**: Monitors Docker events for immediate updates
+- **🎯 Consistency**: CLI and API always show accurate container states
+- **🔧 No Manual Intervention**: Sync happens transparently in background
+- **📊 Unified State Store**: Single Redis instance for all components
 
 ### Request Persistence & Replay
 
@@ -259,16 +277,48 @@ stateDiagram-v2
 | `list` | List all agents | `agentainer list` |
 | `logs` | View agent logs | `agentainer logs agent-123 --follow` |
 | `requests` | View pending requests | `agentainer requests agent-123` |
+| `health` | View health status | `agentainer health` or `agentainer health agent-123` |
+| `metrics` | View resource metrics | `agentainer metrics agent-123` or `agentainer metrics agent-123 --history` |
+| `backup` | Backup/restore agents | `agentainer backup create --name daily` or `agentainer backup restore backup-123` |
+| `audit` | View audit logs | `agentainer audit` or `agentainer audit --action deploy_agent --duration 1h` |
 
 </details>
 
 <details>
-<summary><b>Advanced Deployment</b></summary>
+<summary><b>Deploy from Dockerfile</b></summary>
+
+Agentainer can automatically build Docker images from Dockerfiles during deployment:
+
+```bash
+# Deploy directly from a Dockerfile
+agentainer deploy --name my-agent --image ./Dockerfile
+
+# Deploy from a Dockerfile in another directory
+agentainer deploy --name web-app --image ./my-app/Dockerfile.production
+
+# The system will:
+# 1. Detect that you're providing a Dockerfile
+# 2. Build the image automatically with progress display
+# 3. Generate a unique image name (e.g., agentainer-my-agent:20241227-143052)
+# 4. Deploy the agent using the built image
+```
+
+**Features:**
+- **Automatic Detection**: Recognizes Dockerfile vs image name
+- **Progress Display**: Shows build progress with spinner
+- **Smart Naming**: Generates unique image names to prevent conflicts
+- **Build Context**: Uses the Dockerfile's directory as build context
+- **Error Handling**: Validates images before deployment
+
+</details>
+
+<details>
+<summary><b>Advanced Deployment Options</b></summary>
 
 ```bash
 agentainer deploy \
   --name production-agent \
-  --image my-agent:v1.0 \
+  --image my-agent:v1.0 \               # Can also be a Dockerfile path!
   --volume ./data:/app/data \          # Persistent storage
   --volume ./config:/app/config:ro \   # Read-only config
   --env API_KEY=secret \               # Environment variables
@@ -276,7 +326,11 @@ agentainer deploy \
   --cpu 1 \                            # CPU limit (1 core)
   --memory 512M \                      # Memory limit (512MB)
   --auto-restart \                     # Restart on failure
-  --token custom-auth-token            # Custom auth token
+  --token custom-auth-token \          # Custom auth token
+  --health-endpoint /health \          # Health check endpoint
+  --health-interval 30s \              # Check interval
+  --health-timeout 5s \                # Request timeout
+  --health-retries 3                   # Retries before restart
 ```
 
 > **Note**: Direct port mappings (`--port`) are deprecated for security. All agent access is through the proxy.
@@ -307,6 +361,10 @@ spec:
         - host: ./web-data
           container: /usr/share/nginx/html
       autoRestart: true
+      healthCheck:
+        endpoint: /
+        interval: 30s
+        retries: 3
     
     - name: api-agent
       image: node:18-alpine
@@ -372,6 +430,117 @@ agentainer requests agent-123
 agentainer start agent-123
 ```
 
+### 🏥 Health Checks
+
+Agentainer monitors agent health and automatically restarts unhealthy agents:
+
+1. **Configurable Endpoints**: Define custom health check paths
+2. **Auto-Restart**: Restart agents that fail health checks
+3. **Failure Tracking**: Monitor consecutive failures before restart
+4. **Status Monitoring**: View health status via CLI or API
+
+```bash
+# View health status for all agents
+agentainer health
+
+# View health status for a specific agent
+agentainer health agent-123
+
+# Deploy with health checks
+agentainer deploy --name my-agent --image my-app:latest \
+  --health-endpoint /health \
+  --health-interval 30s \
+  --health-retries 3 \
+  --auto-restart
+```
+
+### 📊 Resource Monitoring
+
+Real-time resource monitoring for all agents with historical data:
+
+1. **CPU & Memory**: Track usage and limits
+2. **Network I/O**: Monitor bandwidth and packet counts
+3. **Disk I/O**: Track read/write operations
+4. **History**: View up to 24 hours of metrics data
+
+```bash
+# View current resource metrics
+agentainer metrics agent-123
+
+# View metrics history (last hour)
+agentainer metrics agent-123 --history
+
+# View metrics for specific duration
+agentainer metrics agent-123 --history --duration 6h
+
+# Get metrics via API
+curl http://localhost:8081/agents/agent-123/metrics \
+  -H "Authorization: Bearer agentainer-default-token"
+```
+
+### 💾 Backup & Restore
+
+Complete backup solution for agent configurations and persistent data:
+
+1. **Configuration Backup**: Save agent settings, environment, and volumes
+2. **Volume Data**: Backup persistent volume data  
+3. **Selective Restore**: Restore all or specific agents
+4. **Export/Import**: Share backups as tar.gz files
+
+```bash
+# Create a backup of all agents
+agentainer backup create --name "production-backup" --description "Weekly backup"
+
+# Backup specific agents
+agentainer backup create --name "critical-agents" --agents agent-123,agent-456
+
+# List available backups
+agentainer backup list
+
+# Restore all agents from backup
+agentainer backup restore backup-1234567890
+
+# Restore specific agents
+agentainer backup restore backup-1234567890 --agents agent-123
+
+# Export backup for archival
+agentainer backup export backup-1234567890 production-backup.tar.gz
+
+# Delete old backup
+agentainer backup delete backup-1234567890
+```
+
+### 📝 Logging & Audit Trail
+
+Comprehensive logging system with structured logs and audit trails:
+
+1. **Structured Logs**: JSON-formatted logs with metadata
+2. **Audit Trail**: Track all administrative actions
+3. **Log Rotation**: Automatic rotation and cleanup
+4. **Real-time Access**: Stream logs via Redis
+5. **Filtering**: Query logs by component, level, or time
+
+```bash
+# View audit logs for all actions
+agentainer audit
+
+# Filter audit logs
+agentainer audit --user admin --action deploy_agent --duration 24h
+
+# View audit logs for specific resource
+agentainer audit --resource agent --duration 1h
+
+# Export audit logs (limit results)
+agentainer audit --limit 1000 > audit-export.log
+```
+
+**Audit Events Tracked:**
+- Agent deployment, start, stop, restart, removal
+- Configuration changes
+- Authentication attempts
+- API access with IP tracking
+- Resource modifications
+
 ---
 
 ## 🔌 API Reference
@@ -392,10 +561,13 @@ agentainer start agent-123
 | POST | `/agents/{id}/resume` | Resume agent |
 | DELETE | `/agents/{id}` | Remove agent |
 | GET | `/agents/{id}/logs` | Get agent logs |
-| GET | `/agents/{id}/metrics` | Get agent metrics |
+| GET | `/agents/{id}/metrics` | Get current agent metrics |
+| GET | `/agents/{id}/metrics/history` | Get agent metrics history |
 | GET | `/agents/{id}/requests` | Get pending requests |
 | GET | `/agents/{id}/requests/{reqId}` | Get specific request |
 | POST | `/agents/{id}/requests/{reqId}/replay` | Manually replay request |
+| GET | `/agents/{id}/health` | Get agent health status |
+| GET | `/health/agents` | Get all agents health status |
 | ANY | `/agent/{id}/*` | Proxy to agent |
 
 </details>
@@ -433,6 +605,34 @@ curl http://localhost:8081/agents/{id}/requests \
 ---
 
 ## 🎯 Examples
+
+### Deploy from Dockerfile
+
+```bash
+# Example 1: Deploy from a simple Dockerfile
+cat > Dockerfile.hello <<EOF
+FROM python:3.11-slim
+RUN echo 'print("Hello from Agentainer!")' > app.py
+CMD ["python", "app.py"]
+EOF
+
+agentainer deploy --name hello-world --image Dockerfile.hello
+agentainer start <agent-id>
+
+# Example 2: Deploy from existing project Dockerfile
+agentainer deploy \
+  --name my-api \
+  --image ./my-project/Dockerfile \
+  --env NODE_ENV=production \
+  --volume ./config:/app/config:ro
+
+# Example 3: Deploy LLM agent from example
+agentainer deploy \
+  --name llm-agent \
+  --image examples/llm-agent/Dockerfile \
+  --env OPENAI_API_KEY=$OPENAI_API_KEY \
+  --volume ./llm-data:/app/state
+```
 
 ### Building Resilient Agents
 
@@ -623,6 +823,9 @@ agentainer-lab/
 │   ├── tests/          # Test scripts
 │   └── deprecated/     # Legacy scripts
 ├── examples/           # Example agents
+│   ├── simple-agent/   # Basic Flask agent
+│   ├── llm-agent/      # Multi-provider LLM agent
+│   └── deployments/    # YAML deployment examples
 └── docs/              # Documentation
 ```
 
@@ -680,6 +883,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 | Agent not accessible | Check proxy endpoint: `http://localhost:8081/agent/<id>/` |
 | Requests not replaying | Check persistence is enabled in config.yaml |
 | Installation fails | Run `make verify` to check prerequisites |
+| "Image not found" error | Build the Docker image first or use a Dockerfile path |
+| Agent states out of sync | Wait 10 seconds for auto-sync or restart server |
 
 </details>
 

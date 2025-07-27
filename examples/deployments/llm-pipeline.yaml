@@ -66,13 +66,17 @@ spec:
         enabled: true
         retryPolicy: exponential
 
-    # Monitoring dashboard
-    - name: monitor
-      image: custom/monitor-dashboard:latest
+    # Monitoring service
+    - name: metrics-collector
+      image: custom/metrics-collector:latest
       env:
-        REFRESH_INTERVAL: "5"
-        METRICS_ENDPOINT: http://localhost:8081/metrics
+        COLLECTION_INTERVAL: "30"
+        EXPORT_FORMAT: prometheus
+        REDIS_HOST: redis
       resources:
         memory: 256M
         cpu: 0.5
-      token: monitor-token-12345
+      volumes:
+        - host: ./metrics
+          container: /app/metrics
+      autoRestart: true

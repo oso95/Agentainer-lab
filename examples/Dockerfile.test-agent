@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install flask
+
+# Create a simple test agent
+RUN echo 'from flask import Flask, jsonify\n\
+app = Flask(__name__)\n\
+\n\
+@app.route("/health")\n\
+def health():\n\
+    return jsonify({"status": "healthy"})\n\
+\n\
+@app.route("/")\n\
+def index():\n\
+    return jsonify({"message": "Hello from auto-built agent!"})\n\
+\n\
+if __name__ == "__main__":\n\
+    app.run(host="0.0.0.0", port=8000)' > app.py
+
+EXPOSE 8000
+
+CMD ["python", "app.py"]

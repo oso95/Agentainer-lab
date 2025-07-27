@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/go-redis/redis/v8"
+	"github.com/agentainer/agentainer-lab/pkg/agentsync"
 )
 
 type Status string
@@ -52,6 +53,7 @@ type Agent struct {
 	Token        string            `json:"token"`
 	Ports        []PortMapping     `json:"ports"`
 	Volumes      []VolumeMapping   `json:"volumes"`
+	HealthCheck  *HealthCheckConfig `json:"health_check,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
@@ -68,10 +70,18 @@ type VolumeMapping struct {
 	ReadOnly      bool   `json:"read_only"`
 }
 
+type HealthCheckConfig struct {
+	Endpoint string `json:"endpoint"`
+	Interval string `json:"interval"`
+	Timeout  string `json:"timeout,omitempty"`
+	Retries  int    `json:"retries,omitempty"`
+}
+
 type Manager struct {
 	dockerClient *client.Client
 	redisClient  *redis.Client
 	configPath   string
+	quickSync    *agentsync.QuickSync
 }
 
 func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPath string) *Manager {
@@ -79,6 +89,7 @@ func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPa
 		dockerClient: dockerClient,
 		redisClient:  redisClient,
 		configPath:   configPath,
+		quickSync:    agentsync.NewQuickSync(dockerClient, redisClient),
 	}
 	
 	// Ensure the internal network exists
@@ -90,7 +101,16 @@ func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPa
 	return m
 }
 
-func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping) (*Agent, error) {
+func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping, healthCheck *HealthCheckConfig) (*Agent, error) {
+	// Validate that the Docker image exists
+	_, _, err := m.dockerClient.ImageInspectWithRaw(ctx, image)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return nil, fmt.Errorf("docker image '%s' not found. Please build or pull the image first", image)
+		}
+		return nil, fmt.Errorf("failed to inspect docker image: %w", err)
+	}
+	
 	id := generateID()
 	
 	// In the new architecture, we don't expose ports directly
@@ -109,16 +129,13 @@ func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[st
 		Token:       token,
 		Ports:       []PortMapping{}, // No longer exposing ports
 		Volumes:     volumes,
+		HealthCheck: healthCheck,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
 
 	if err := m.saveAgent(agent); err != nil {
 		return nil, fmt.Errorf("failed to save agent: %w", err)
-	}
-
-	if err := m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", id), agent.Status, 0).Err(); err != nil {
-		return nil, fmt.Errorf("failed to cache agent status: %w", err)
 	}
 
 	return agent, nil
@@ -152,8 +169,15 @@ func (m *Manager) Start(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after start: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Stop(ctx context.Context, agentID string) error {
@@ -179,8 +203,15 @@ func (m *Manager) Stop(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after stop: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Restart(ctx context.Context, agentID string) error {
@@ -210,8 +241,15 @@ func (m *Manager) Pause(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after pause: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Resume(ctx context.Context, agentID string) error {
@@ -261,8 +299,15 @@ func (m *Manager) Resume(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after resume: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Remove(ctx context.Context, agentID string) error {
@@ -305,21 +350,33 @@ func (m *Manager) Remove(ctx context.Context, agentID string) error {
 }
 
 func (m *Manager) GetAgent(agentID string) (*Agent, error) {
-	agents, err := m.loadAgents()
-	if err != nil {
-		return nil, err
+	ctx := context.Background()
+	
+	// Get agent from Redis
+	key := fmt.Sprintf("agent:%s", agentID)
+	data, err := m.redisClient.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil, fmt.Errorf("agent not found")
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get agent: %w", err)
 	}
-
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			return &agent, nil
-		}
+	
+	var agent Agent
+	if err := json.Unmarshal([]byte(data), &agent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent: %w", err)
 	}
-
-	return nil, fmt.Errorf("agent not found")
+	
+	return &agent, nil
 }
 
 func (m *Manager) ListAgents(token string) ([]Agent, error) {
+	// Quick sync all agents before listing to ensure fresh data
+	ctx := context.Background()
+	if err := m.quickSync.SyncAll(ctx); err != nil {
+		// Log but don't fail - still return what we have
+		log.Printf("Warning: Failed to sync before list: %v", err)
+	}
+	
 	allAgents, err := m.loadAgents()
 	if err != nil {
 		return nil, err
@@ -440,77 +497,86 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 }
 
 func (m *Manager) saveAgent(agent *Agent) error {
-	agents, err := m.loadAgents()
+	ctx := context.Background()
+	
+	// Save agent to Redis as primary storage
+	data, err := json.Marshal(agent)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal agent: %w", err)
 	}
-
-	found := false
-	for i, a := range agents {
-		if a.ID == agent.ID {
-			agents[i] = *agent
-			found = true
-			break
-		}
+	
+	key := fmt.Sprintf("agent:%s", agent.ID)
+	if err := m.redisClient.Set(ctx, key, data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to save agent to Redis: %w", err)
 	}
-
-	if !found {
-		agents = append(agents, *agent)
+	
+	// Also save to agents list for efficient listing
+	if err := m.redisClient.SAdd(ctx, "agents:list", agent.ID).Err(); err != nil {
+		return fmt.Errorf("failed to add agent to list: %w", err)
 	}
-
-	data, err := json.MarshalIndent(agents, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(m.configPath, data, 0644)
+	
+	return nil
 }
 
 func (m *Manager) removeAgentFromStorage(agentID string) error {
-	agents, err := m.loadAgents()
+	// Remove agent from Redis storage
+	ctx := context.Background()
+	key := fmt.Sprintf("agent:%s", agentID)
+	
+	// Check if agent exists first
+	exists, err := m.redisClient.Exists(ctx, key).Result()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check agent existence: %w", err)
 	}
-
-	// Filter out the agent to remove
-	var filteredAgents []Agent
-	found := false
-	for _, agent := range agents {
-		if agent.ID != agentID {
-			filteredAgents = append(filteredAgents, agent)
-		} else {
-			found = true
-		}
-	}
-
-	if !found {
+	if exists == 0 {
 		return fmt.Errorf("agent not found in storage")
 	}
-
-	// Save the filtered list
-	data, err := json.MarshalIndent(filteredAgents, "", "  ")
-	if err != nil {
-		return err
+	
+	// Delete the agent
+	if err := m.redisClient.Del(ctx, key).Err(); err != nil {
+		return fmt.Errorf("failed to delete agent from Redis: %w", err)
 	}
-
-	return os.WriteFile(m.configPath, data, 0644)
+	
+	// Remove from agents list
+	if err := m.redisClient.SRem(ctx, "agents:list", agentID).Err(); err != nil {
+		return fmt.Errorf("failed to remove agent from list: %w", err)
+	}
+	
+	return nil
 }
 
 func (m *Manager) loadAgents() ([]Agent, error) {
-	if _, err := os.Stat(m.configPath); os.IsNotExist(err) {
-		return []Agent{}, nil
-	}
-
-	data, err := os.ReadFile(m.configPath)
+	ctx := context.Background()
+	
+	// Get all agent IDs from Redis set
+	agentIDs, err := m.redisClient.SMembers(ctx, "agents:list").Result()
 	if err != nil {
-		return nil, err
+		log.Printf("ERROR: Failed to get agent list from Redis: %v", err)
+		return nil, fmt.Errorf("failed to get agent list: %w", err)
 	}
-
-	var agents []Agent
-	if err := json.Unmarshal(data, &agents); err != nil {
-		return nil, err
+	
+	log.Printf("DEBUG: Found %d agent IDs in Redis: %v", len(agentIDs), agentIDs)
+	
+	agents := make([]Agent, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		key := fmt.Sprintf("agent:%s", id)
+		data, err := m.redisClient.Get(ctx, key).Result()
+		if err == redis.Nil {
+			// Agent in list but not found, clean up
+			m.redisClient.SRem(ctx, "agents:list", id)
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("failed to get agent %s: %w", id, err)
+		}
+		
+		var agent Agent
+		if err := json.Unmarshal([]byte(data), &agent); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal agent %s: %w", id, err)
+		}
+		
+		agents = append(agents, agent)
 	}
-
+	
 	return agents, nil
 }
 

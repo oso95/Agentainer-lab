@@ -200,6 +200,17 @@ func (a *AgentSpec) ConvertToAgentConfigs() ([]AgentConfig, error) {
 			})
 		}
 
+		// Convert health check if specified
+		var healthCheck *agent.HealthCheckConfig
+		if a.HealthCheck != nil {
+			healthCheck = &agent.HealthCheckConfig{
+				Endpoint: a.HealthCheck.Endpoint,
+				Interval: a.HealthCheck.Interval,
+				Timeout:  a.HealthCheck.Timeout,
+				Retries:  a.HealthCheck.Retries,
+			}
+		}
+
 		config := AgentConfig{
 			Name:        name,
 			Image:       a.Image,
@@ -209,6 +220,7 @@ func (a *AgentSpec) ConvertToAgentConfigs() ([]AgentConfig, error) {
 			AutoRestart: a.AutoRestart,
 			Token:       a.Token,
 			Volumes:     volumes,
+			HealthCheck: healthCheck,
 		}
 
 		configs = append(configs, config)
@@ -227,6 +239,7 @@ type AgentConfig struct {
 	AutoRestart bool
 	Token       string
 	Volumes     []agent.VolumeMapping
+	HealthCheck *agent.HealthCheckConfig
 }
 
 // ParseCPU parses CPU limit strings

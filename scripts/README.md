@@ -5,17 +5,6 @@ This directory contains helper scripts for Agentainer Lab.
 ## Directory Structure
 
 - `install-prerequisites.sh` - Installs all prerequisites (Git, Go, Docker) on fresh VMs
-- `tests/` - Test scripts for validating Agentainer features
-- `deprecated/` - Old installation scripts (replaced by Makefile)
-
-## Deprecated Scripts
-
-The following scripts have been consolidated into the Makefile and are kept in `deprecated/` for reference:
-
-- `setup.sh` → Use `make setup` instead
-- `install.sh` → Use `make install-user` instead
-- `uninstall.sh` → Use `make uninstall-user` instead
-- `verify-setup.sh` → Use `make verify` instead
 
 ## Usage
 

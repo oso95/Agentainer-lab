@@ -30,8 +30,10 @@ Thumbs.db
 
 # Application specific
 /agentainer
+/agentainer-test
 data/
 *.log
+agent-states/
 
 # Environment variables
 .env.local
@@ -41,3 +43,18 @@ data/
 
 # Docker
 .dockerignore
+
+# Task and planning documents
+TASK_PLAN*.md
+TASK_PLANS/
+TODO*.md
+*_PLAN.md
+*_TODO.md
+.tasks/
+.planning/
+
+# Internal documentation and development notes
+docs/epics/
+docs/README-UPDATES.md
+docs/internal/
+docs/planning/

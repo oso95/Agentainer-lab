@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: AgentDeployment
+metadata:
+  name: llm-agent-deployment
+  description: Deploy LLM agents with different providers
+  
+spec:
+  agents:
+    # OpenAI GPT Agent
+    - name: gpt-agent
+      image: llm-agent:latest
+      env:
+        AGENT_NAME: gpt-assistant
+        LLM_PROVIDER: openai
+        OPENAI_API_KEY: ${OPENAI_API_KEY}  # Set this in your environment
+        OPENAI_MODEL: gpt-3.5-turbo
+      resources:
+        memory: 512M
+        cpu: 1
+      volumes:
+        - host: ./agent-states/gpt
+          container: /app/state
+      autoRestart: true
+      healthCheck:
+        endpoint: /health
+        interval: 30s
+        timeout: 5s
+        retries: 3
+    
+    # Google Gemini Agent
+    - name: gemini-agent
+      image: llm-agent:latest
+      env:
+        AGENT_NAME: gemini-assistant
+        LLM_PROVIDER: gemini
+        GEMINI_API_KEY: ${GEMINI_API_KEY}  # Set this in your environment
+        GEMINI_MODEL: gemini-pro
+      resources:
+        memory: 512M
+        cpu: 1
+      volumes:
+        - host: ./agent-states/gemini
+          container: /app/state
+      autoRestart: true
+      healthCheck:
+        endpoint: /health
+        interval: 30s
+        timeout: 5s
+        retries: 3
