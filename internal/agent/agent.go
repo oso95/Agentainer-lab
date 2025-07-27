@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -27,6 +25,9 @@ const (
 	StatusStopped Status = "stopped"
 	StatusPaused  Status = "paused"
 	StatusFailed  Status = "failed"
+	
+	// Network configuration
+	AgentainerNetworkName = "agentainer-network"
 )
 
 func (s Status) MarshalBinary() ([]byte, error) {
@@ -74,30 +75,27 @@ type Manager struct {
 }
 
 func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPath string) *Manager {
-	return &Manager{
+	m := &Manager{
 		dockerClient: dockerClient,
 		redisClient:  redisClient,
 		configPath:   configPath,
 	}
+	
+	// Ensure the internal network exists
+	ctx := context.Background()
+	if err := m.ensureNetworkExists(ctx); err != nil {
+		log.Printf("Warning: Failed to create network: %v", err)
+	}
+	
+	return m
 }
 
 func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping) (*Agent, error) {
 	id := generateID()
 	
-	// If no ports specified, auto-assign a port for the default agent port (8000)
-	if len(ports) == 0 {
-		autoPort, err := m.findAvailablePort()
-		if err != nil {
-			return nil, fmt.Errorf("failed to find available port: %w", err)
-		}
-		ports = []PortMapping{
-			{
-				HostPort:      autoPort,
-				ContainerPort: 8000, // Default agent port
-				Protocol:      "tcp",
-			},
-		}
-	}
+	// In the new architecture, we don't expose ports directly
+	// All access is through the proxy
+	// ports parameter is kept for backward compatibility but ignored
 	
 	agent := &Agent{
 		ID:          id,
@@ -109,7 +107,7 @@ func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[st
 		MemoryLimit: memoryLimit,
 		AutoRestart: autoRestart,
 		Token:       token,
-		Ports:       ports,
+		Ports:       []PortMapping{}, // No longer exposing ports
 		Volumes:     volumes,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -369,25 +367,8 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Create exposed ports and port bindings
-	exposedPorts := make(nat.PortSet)
-	portBindings := make(nat.PortMap)
-
-	for _, port := range agent.Ports {
-		containerPort, err := nat.NewPort(port.Protocol, fmt.Sprintf("%d", port.ContainerPort))
-		if err != nil {
-			return "", fmt.Errorf("invalid container port: %w", err)
-		}
-		
-		exposedPorts[containerPort] = struct{}{}
-		
-		portBindings[containerPort] = []nat.PortBinding{
-			{
-				HostIP:   "0.0.0.0",
-				HostPort: fmt.Sprintf("%d", port.HostPort),
-			},
-		}
-	}
+	// No port bindings in the new architecture
+	// Containers are accessed through the proxy only
 
 	// Create volume mounts
 	var mounts []mount.Mount
@@ -423,11 +404,11 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 	config := &container.Config{
 		Image:        agent.Image,
 		Env:          env,
-		ExposedPorts: exposedPorts,
 		Labels: map[string]string{
 			"agentainer.id":   agent.ID,
 			"agentainer.name": agent.Name,
 		},
+		Hostname: agent.ID, // Use agent ID as hostname for easy identification
 	}
 
 	hostConfig := &container.HostConfig{
@@ -438,8 +419,8 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 			Memory:   agent.MemoryLimit,
 			NanoCPUs: agent.CPULimit,
 		},
-		PortBindings: portBindings,
 		Mounts:       mounts,
+		NetworkMode: container.NetworkMode(AgentainerNetworkName),
 	}
 
 	if agent.AutoRestart {
@@ -537,35 +518,34 @@ func generateID() string {
 	return fmt.Sprintf("agent-%d", time.Now().UnixNano())
 }
 
-func (m *Manager) findAvailablePort() (int, error) {
-	// Get all existing agents to check their ports
-	agents, err := m.loadAgents()
+func (m *Manager) ensureNetworkExists(ctx context.Context) error {
+	// Check if network already exists
+	networks, err := m.dockerClient.NetworkList(ctx, types.NetworkListOptions{})
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to list networks: %w", err)
 	}
 	
-	usedPorts := make(map[int]bool)
-	for _, agent := range agents {
-		for _, port := range agent.Ports {
-			usedPorts[port.HostPort] = true
+	for _, net := range networks {
+		if net.Name == AgentainerNetworkName {
+			return nil // Network already exists
 		}
 	}
 	
-	// Start looking from port 9000 to avoid conflicts with common services
-	for port := 9000; port < 10000; port++ {
-		if !usedPorts[port] && isPortAvailable(port) {
-			return port, nil
-		}
+	// Create the network
+	_, err = m.dockerClient.NetworkCreate(ctx, AgentainerNetworkName, types.NetworkCreate{
+		Driver: "bridge",
+		Options: map[string]string{
+			"com.docker.network.bridge.name": "agentainer0",
+		},
+		Labels: map[string]string{
+			"managed-by": "agentainer",
+		},
+	})
+	
+	if err != nil {
+		return fmt.Errorf("failed to create network: %w", err)
 	}
 	
-	return 0, fmt.Errorf("no available ports found in range 9000-9999")
-}
-
-func isPortAvailable(port int) bool {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-	defer listener.Close()
-	return true
+	log.Printf("Created Agentainer network: %s", AgentainerNetworkName)
+	return nil
 }

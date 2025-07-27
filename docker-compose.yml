@@ -8,6 +8,8 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    networks:
+      - agentainer-internal
 
   agentainer:
     build: .
@@ -25,6 +27,16 @@ services:
       - AGENTAINER_DOCKER_HOST=unix:///var/run/docker.sock
       - AGENTAINER_STORAGE_DATA_DIR=/app/data
     restart: unless-stopped
+    networks:
+      - agentainer-internal
+      - agentainer-network
+
+networks:
+  agentainer-internal:
+    driver: bridge
+  agentainer-network:
+    external: true
+    name: agentainer-network
 
 volumes:
   redis_data:

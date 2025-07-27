@@ -411,16 +411,12 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Find the first port mapping (assuming agents expose one main port)
-	if len(agentObj.Ports) == 0 {
-		s.sendError(w, http.StatusServiceUnavailable, "Agent has no exposed ports")
-		return
-	}
+	// In the new architecture, we connect to the agent using its container name
+	// on the internal network. Default agent port is 8000.
+	containerPort := 8000 // Standard agent port
 	
-	hostPort := agentObj.Ports[0].HostPort
-	
-	// Create target URL
-	targetURL, err := url.Parse(fmt.Sprintf("http://localhost:%d", hostPort))
+	// Create target URL using the agent ID as hostname (set in container config)
+	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%d", agentObj.ID, containerPort))
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "Failed to parse target URL")
 		return

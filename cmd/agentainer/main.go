@@ -72,14 +72,11 @@ var serverCmd = &cobra.Command{
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy an agent from a Docker image",
-	Long: `Deploy an agent container with automatic port assignment and optional persistent storage.
+	Long: `Deploy an agent container with optional persistent storage and environment configuration.
 
 Examples:
-  # Basic deployment (auto-assigns port 9000+)
+  # Basic deployment
   agentainer deploy --name my-agent --image nginx:latest
-
-  # With custom port mapping
-  agentainer deploy --name web-agent --image nginx:latest --port 8080:80
 
   # With persistent storage for stateful agents
   agentainer deploy --name ai-agent --image my-ai:latest --volume ./agent-data:/app/data
@@ -91,14 +88,17 @@ Examples:
     --cpu 1000000000 --memory 536870912 --auto-restart
 
 Agent Access:
-  • Direct: http://localhost:<auto-assigned-port>
-  • Proxy:  http://localhost:8081/agent/<agent-id>/
+  All agents are accessed through the secure proxy:
+  • Proxy: http://localhost:8081/agent/<agent-id>/
+  • API:   http://localhost:8081/agents/<agent-id>
   
 Volume Formats:
   • host:container        (read-write)
   • host:container:ro     (read-only)
   • ./relative/path       (relative to current directory)
-  • /absolute/path        (absolute path)`,
+  • /absolute/path        (absolute path)
+  
+Note: Agents run in an isolated network. Direct port access is disabled for security.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		deployAgent(cmd)
 	},
@@ -201,7 +201,7 @@ func init() {
 	deployCmd.Flags().Int64P("memory", "m", 0, "Memory limit (bytes)")
 	deployCmd.Flags().BoolP("auto-restart", "r", false, "Auto-restart on crash")
 	deployCmd.Flags().StringP("token", "t", "", "Agent token")
-	deployCmd.Flags().StringSliceP("port", "p", []string{}, "Port mappings (host:container/protocol, e.g., 8080:8000/tcp)")
+	deployCmd.Flags().StringSliceP("port", "p", []string{}, "DEPRECATED: Port mappings are no longer supported. All access is through proxy.")
 	deployCmd.Flags().StringSliceP("volume", "v", []string{}, "Volume mappings (host:container[:ro], e.g., ./data:/app/data or ./config:/app/config:ro)")
 	deployCmd.MarkFlagRequired("image")
 	deployCmd.MarkFlagRequired("name")
@@ -318,17 +318,11 @@ func deployAgent(cmd *cobra.Command) {
 	fmt.Printf("Name: %s\n", agentObj.Name)
 	fmt.Printf("Image: %s\n", agentObj.Image)
 	fmt.Printf("Status: %s\n", agentObj.Status)
-	if len(agentObj.Ports) > 0 {
-		fmt.Printf("Port mappings:\n")
-		for _, port := range agentObj.Ports {
-			fmt.Printf("  %d:%d/%s\n", port.HostPort, port.ContainerPort, port.Protocol)
-		}
-		// Show all access methods
-		fmt.Printf("\nAccess methods:\n")
-		fmt.Printf("  Direct: http://localhost:%d\n", agentObj.Ports[0].HostPort)
-		fmt.Printf("  Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
-		fmt.Printf("  API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
-	}
+	
+	// In the new architecture, all access is through the proxy
+	fmt.Printf("\nAccess:\n")
+	fmt.Printf("  Proxy: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+	fmt.Printf("  API:   http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
 	if len(agentObj.Volumes) > 0 {
 		fmt.Printf("Volume mappings:\n")
 		for _, volume := range agentObj.Volumes {
@@ -447,19 +441,13 @@ func listAgents() {
 		return
 	}
 
-	fmt.Printf("%-20s %-20s %-30s %-10s %-8s\n", "ID", "NAME", "IMAGE", "STATUS", "PORT")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Printf("%-20s %-20s %-30s %-10s\n", "ID", "NAME", "IMAGE", "STATUS")
+	fmt.Println(strings.Repeat("-", 80))
 	
 	for _, agentObj := range agents {
-		port := "N/A"
-		if len(agentObj.Ports) > 0 {
-			port = fmt.Sprintf("%d", agentObj.Ports[0].HostPort)
-		}
-		fmt.Printf("%-20s %-20s %-30s %-10s %-8s\n", agentObj.ID, agentObj.Name, agentObj.Image, agentObj.Status, port)
-		if agentObj.Status == agent.StatusRunning && len(agentObj.Ports) > 0 {
-			fmt.Printf("  → Direct: http://localhost:%s\n", port)
-			fmt.Printf("  → Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
-			fmt.Printf("  → API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
+		fmt.Printf("%-20s %-20s %-30s %-10s\n", agentObj.ID, agentObj.Name, agentObj.Image, agentObj.Status)
+		if agentObj.Status == agent.StatusRunning {
+			fmt.Printf("  → Access: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
 		}
 	}
 }
