@@ -85,6 +85,7 @@
 - **Request Persistence**: Automatic queuing and replay of requests to unavailable agents
 - **Crash Resilience**: Requests are preserved even if agents crash mid-processing
 - **Simplified Installation**: All operations now through unified `make` commands
+- **YAML Deployments**: Deploy multiple agents at once using YAML configuration files
 
 ---
 
@@ -184,6 +185,9 @@ make verify
 # Deploy an agent
 agentainer deploy --name my-first-agent --image nginx:latest
 
+# Or deploy multiple agents from YAML
+agentainer deploy --config examples/deployments/basic-agents.yaml
+
 # Start the agent
 agentainer start <agent-id>
 
@@ -276,6 +280,51 @@ agentainer deploy \
 ```
 
 > **Note**: Direct port mappings (`--port`) are deprecated for security. All agent access is through the proxy.
+
+</details>
+
+<details>
+<summary><b>YAML Batch Deployment</b></summary>
+
+Deploy multiple agents at once using YAML configuration files:
+
+```yaml
+# agents.yaml
+apiVersion: v1
+kind: AgentDeployment
+metadata:
+  name: my-deployment
+  description: Deploy multiple agents at once
+spec:
+  agents:
+    - name: web-agent
+      image: nginx:alpine
+      replicas: 2
+      resources:
+        memory: 256Mi
+        cpu: 500m
+      volumes:
+        - host: ./web-data
+          container: /usr/share/nginx/html
+      autoRestart: true
+    
+    - name: api-agent
+      image: node:18-alpine
+      env:
+        NODE_ENV: production
+      resources:
+        memory: 512Mi
+        cpu: 1
+```
+
+Deploy with:
+```bash
+agentainer deploy --config agents.yaml
+```
+
+See `examples/deployments/` for more YAML examples including:
+- `basic-agents.yaml` - Simple multi-agent deployment
+- `llm-pipeline.yaml` - Complex LLM processing pipeline
 
 </details>
 

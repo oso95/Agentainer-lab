@@ -91,6 +91,10 @@ Examples:
     --env API_KEY=secret --env DEBUG=false \
     --cpu 1000000000 --memory 536870912 --auto-restart
 
+  # Deploy from YAML configuration file
+  agentainer deploy --config agents.yaml
+  agentainer deploy --config ./deployments/production.yaml
+
 Agent Access:
   All agents are accessed through the secure proxy:
   • Proxy: http://localhost:8081/agent/<agent-id>/
@@ -211,8 +215,9 @@ and are queued for replay when the agent starts.`,
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.agentainer/config.yaml)")
 
-	deployCmd.Flags().StringP("image", "i", "", "Docker image name (required)")
-	deployCmd.Flags().StringP("name", "n", "", "Agent name (required)")
+	deployCmd.Flags().StringP("config", "", "", "Deploy from YAML configuration file")
+	deployCmd.Flags().StringP("image", "i", "", "Docker image name (required for single deployment)")
+	deployCmd.Flags().StringP("name", "n", "", "Agent name (required for single deployment)")
 	deployCmd.Flags().StringSliceP("env", "e", []string{}, "Environment variables (key=value)")
 	deployCmd.Flags().Int64P("cpu", "c", 0, "CPU limit (nanocpus)")
 	deployCmd.Flags().Int64P("memory", "m", 0, "Memory limit (bytes)")
@@ -220,8 +225,6 @@ func init() {
 	deployCmd.Flags().StringP("token", "t", "", "Agent token")
 	deployCmd.Flags().StringSliceP("port", "p", []string{}, "DEPRECATED: Port mappings are no longer supported. All access is through proxy.")
 	deployCmd.Flags().StringSliceP("volume", "v", []string{}, "Volume mappings (host:container[:ro], e.g., ./data:/app/data or ./config:/app/config:ro)")
-	deployCmd.MarkFlagRequired("image")
-	deployCmd.MarkFlagRequired("name")
 
 	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
 
@@ -289,8 +292,23 @@ func runServer() {
 }
 
 func deployAgent(cmd *cobra.Command) {
+	configFile, _ := cmd.Flags().GetString("config")
+	
+	// Check if deploying from YAML config file
+	if configFile != "" {
+		deployFromYAML(configFile)
+		return
+	}
+	
+	// Otherwise, deploy single agent from CLI flags
 	image, _ := cmd.Flags().GetString("image")
 	name, _ := cmd.Flags().GetString("name")
+	
+	// Validate required flags for single deployment
+	if image == "" || name == "" {
+		log.Fatal("Either --config or both --name and --image are required")
+	}
+	
 	envVars, _ := cmd.Flags().GetStringSlice("env")
 	cpuLimit, _ := cmd.Flags().GetInt64("cpu")
 	memoryLimit, _ := cmd.Flags().GetInt64("memory")
@@ -584,6 +602,114 @@ func parseVolumeMappings(volumeMappings []string) ([]agent.VolumeMapping, error)
 	}
 	
 	return volumes, nil
+}
+
+func deployFromYAML(configFile string) {
+	// Load deployment configuration
+	deployConfig, err := config.LoadDeploymentConfig(configFile)
+	if err != nil {
+		log.Fatalf("Failed to load deployment config: %v", err)
+	}
+
+	fmt.Printf("Deploying agents from: %s\n", configFile)
+	fmt.Printf("Deployment: %s\n", deployConfig.Metadata.Name)
+	if deployConfig.Metadata.Description != "" {
+		fmt.Printf("Description: %s\n", deployConfig.Metadata.Description)
+	}
+	fmt.Println(strings.Repeat("-", 80))
+
+	// Create managers
+	dockerClient, err := docker.NewClient(cfg.Docker.Host)
+	if err != nil {
+		log.Fatalf("Failed to create Docker client: %v", err)
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
+
+	// Track deployed agents
+	deployedAgents := []struct {
+		ID    string
+		Name  string
+		Image string
+	}{}
+
+	// Deploy each agent spec
+	for _, spec := range deployConfig.Spec.Agents {
+		fmt.Printf("\nDeploying agent: %s\n", spec.Name)
+		
+		// Convert spec to agent configs (handles replicas)
+		agentConfigs, err := spec.ConvertToAgentConfigs()
+		if err != nil {
+			log.Printf("Failed to convert agent spec %s: %v", spec.Name, err)
+			continue
+		}
+
+		// Deploy each replica
+		for _, agentConfig := range agentConfigs {
+			// Use default token if not specified
+			token := agentConfig.Token
+			if token == "" {
+				token = cfg.Security.DefaultToken
+			}
+
+			// Empty port mappings (not supported in new architecture)
+			var portMappings []agent.PortMapping
+
+			// Deploy the agent
+			agentObj, err := agentMgr.Deploy(
+				context.Background(),
+				agentConfig.Name,
+				agentConfig.Image,
+				agentConfig.EnvVars,
+				agentConfig.CPULimit,
+				agentConfig.MemoryLimit,
+				agentConfig.AutoRestart,
+				token,
+				portMappings,
+				agentConfig.Volumes,
+			)
+			if err != nil {
+				log.Printf("Failed to deploy %s: %v", agentConfig.Name, err)
+				continue
+			}
+
+			deployedAgents = append(deployedAgents, struct {
+				ID    string
+				Name  string
+				Image string
+			}{
+				ID:    agentObj.ID,
+				Name:  agentObj.Name,
+				Image: agentObj.Image,
+			})
+
+			fmt.Printf("  ✓ %s (ID: %s)\n", agentObj.Name, agentObj.ID)
+		}
+	}
+
+	// Summary
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("\nDeployment Summary:\n")
+	fmt.Printf("Total agents deployed: %d\n\n", len(deployedAgents))
+
+	if len(deployedAgents) > 0 {
+		fmt.Printf("%-20s %-40s %-30s\n", "NAME", "ID", "IMAGE")
+		fmt.Println(strings.Repeat("-", 90))
+		for _, agent := range deployedAgents {
+			fmt.Printf("%-20s %-40s %-30s\n", agent.Name, agent.ID, agent.Image)
+		}
+
+		fmt.Printf("\nAccess all agents through proxy:\n")
+		fmt.Printf("  http://localhost:%d/agent/<agent-id>/\n", cfg.Server.Port)
+		fmt.Printf("\nStart agents with:\n")
+		fmt.Printf("  agentainer start <agent-id>\n")
+	}
 }
 
 func viewRequests(agentID string) {

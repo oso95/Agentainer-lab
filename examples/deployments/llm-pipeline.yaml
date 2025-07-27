@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: AgentDeployment
+metadata:
+  name: llm-processing-pipeline
+  description: Multi-stage LLM processing pipeline with data collection, processing, and storage
+  labels:
+    pipeline: llm
+    stage: production
+
+spec:
+  agents:
+    # Data collector - fetches and queues data
+    - name: data-collector
+      image: custom/data-collector:latest
+      replicas: 3
+      env:
+        REDIS_HOST: redis
+        COLLECTION_INTERVAL: "60"
+        API_KEY: ${COLLECTOR_API_KEY}
+      resources:
+        memory: 512Mi
+        cpu: 1
+      volumes:
+        - host: ./data/raw
+          container: /app/data
+      autoRestart: true
+
+    # LLM processor - processes queued data
+    - name: llm-processor
+      image: custom/llm-processor:latest
+      replicas: 2
+      env:
+        MODEL_NAME: gpt-3.5-turbo
+        OPENAI_API_KEY: ${OPENAI_API_KEY}
+        INPUT_QUEUE: raw-data
+        OUTPUT_QUEUE: processed-data
+      resources:
+        memory: 2Gi
+        cpu: 4
+      volumes:
+        - host: ./models
+          container: /app/models
+          readOnly: true
+        - host: ./data/processed
+          container: /app/output
+      autoRestart: true
+      healthCheck:
+        endpoint: /health
+        interval: 30s
+        retries: 3
+
+    # Results storage - stores processed results
+    - name: result-storage
+      image: custom/result-storage:latest
+      env:
+        DATABASE_URL: ${DATABASE_URL}
+        STORAGE_TYPE: postgres
+      resources:
+        memory: 1Gi
+        cpu: 2
+      volumes:
+        - host: ./data/final
+          container: /app/storage
+      autoRestart: true
+      persistence:
+        enabled: true
+        retryPolicy: exponential
+
+    # Monitoring dashboard
+    - name: monitor
+      image: custom/monitor-dashboard:latest
+      env:
+        REFRESH_INTERVAL: "5"
+        METRICS_ENDPOINT: http://localhost:8081/metrics
+      resources:
+        memory: 256Mi
+        cpu: 500m
+      token: monitor-token-12345
