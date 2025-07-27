@@ -397,19 +397,26 @@ See `examples/deployments/` for more YAML examples including:
 
 ### 🌐 Access Methods
 
-All agents are accessed through the secure proxy:
+Agentainer provides two different endpoints for interacting with agents:
 
-**Proxy Access**: `http://localhost:8081/agent/<id>/`
+#### 1. **Proxy Endpoint** (Access agent's service): `/agent/<id>/`
+Used to access the agent's actual service endpoints:
 ```bash
-# Routes to agent's internal endpoints
+# Routes requests to the agent's internal web service
 curl http://localhost:8081/agent/agent-123/
-curl http://localhost:8081/agent/agent-123/api/status
+curl http://localhost:8081/agent/agent-123/chat
+curl http://localhost:8081/agent/agent-123/api/v1/completions
 ```
 
-**API Access**: `http://localhost:8081/agents/<id>`
+#### 2. **API Endpoint** (Manage agent): `/agents/<id>`
+Used to get agent information and control the agent via REST API:
 ```bash
-# Get agent information via REST API
+# Get agent details, status, configuration
 curl http://localhost:8081/agents/agent-123 \
+  -H "Authorization: Bearer agentainer-default-token"
+
+# Control agent (start, stop, restart)
+curl -X POST http://localhost:8081/agents/agent-123/start \
   -H "Authorization: Bearer agentainer-default-token"
 ```
 

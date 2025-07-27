@@ -672,7 +672,8 @@ func listAgents() {
 	for _, agentObj := range agents {
 		fmt.Printf("%-20s %-20s %-30s %-10s\n", agentObj.ID, agentObj.Name, agentObj.Image, agentObj.Status)
 		if agentObj.Status == agent.StatusRunning {
-			fmt.Printf("  → Access: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+			fmt.Printf("  → Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
+			fmt.Printf("  → API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
 		}
 	}
 }
