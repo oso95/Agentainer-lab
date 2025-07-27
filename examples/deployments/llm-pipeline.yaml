@@ -18,7 +18,7 @@ spec:
         COLLECTION_INTERVAL: "60"
         API_KEY: ${COLLECTOR_API_KEY}
       resources:
-        memory: 512Mi
+        memory: 512M
         cpu: 1
       volumes:
         - host: ./data/raw
@@ -35,7 +35,7 @@ spec:
         INPUT_QUEUE: raw-data
         OUTPUT_QUEUE: processed-data
       resources:
-        memory: 2Gi
+        memory: 2G
         cpu: 4
       volumes:
         - host: ./models
@@ -56,7 +56,7 @@ spec:
         DATABASE_URL: ${DATABASE_URL}
         STORAGE_TYPE: postgres
       resources:
-        memory: 1Gi
+        memory: 1G
         cpu: 2
       volumes:
         - host: ./data/final
@@ -73,6 +73,6 @@ spec:
         REFRESH_INTERVAL: "5"
         METRICS_ENDPOINT: http://localhost:8081/metrics
       resources:
-        memory: 256Mi
-        cpu: 500m
+        memory: 256M
+        cpu: 0.5
       token: monitor-token-12345

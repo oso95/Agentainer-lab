@@ -89,7 +89,7 @@ Examples:
   agentainer deploy --name production-agent --image my-app:latest \
     --volume ./data:/app/data --volume ./config:/app/config:ro \
     --env API_KEY=secret --env DEBUG=false \
-    --cpu 1000000000 --memory 536870912 --auto-restart
+    --cpu 1 --memory 512M --auto-restart
 
   # Deploy from YAML configuration file
   agentainer deploy --config agents.yaml
@@ -99,6 +99,10 @@ Agent Access:
   All agents are accessed through the secure proxy:
   • Proxy: http://localhost:8081/agent/<agent-id>/
   • API:   http://localhost:8081/agents/<agent-id>
+  
+Resource Limits:
+  • CPU:    0.5, 1, 2 (cores) or 500m (millicores)
+  • Memory: 512M, 1G, 1.5G (also supports Mi/Gi for k8s compatibility)
   
 Volume Formats:
   • host:container        (read-write)
@@ -219,8 +223,8 @@ func init() {
 	deployCmd.Flags().StringP("image", "i", "", "Docker image name (required for single deployment)")
 	deployCmd.Flags().StringP("name", "n", "", "Agent name (required for single deployment)")
 	deployCmd.Flags().StringSliceP("env", "e", []string{}, "Environment variables (key=value)")
-	deployCmd.Flags().Int64P("cpu", "c", 0, "CPU limit (nanocpus)")
-	deployCmd.Flags().Int64P("memory", "m", 0, "Memory limit (bytes)")
+	deployCmd.Flags().StringP("cpu", "c", "", "CPU limit (e.g., 0.5, 1, 2 for cores)")
+	deployCmd.Flags().StringP("memory", "m", "", "Memory limit (e.g., 512M, 2G)")
 	deployCmd.Flags().BoolP("auto-restart", "r", false, "Auto-restart on crash")
 	deployCmd.Flags().StringP("token", "t", "", "Agent token")
 	deployCmd.Flags().StringSliceP("port", "p", []string{}, "DEPRECATED: Port mappings are no longer supported. All access is through proxy.")
@@ -310,12 +314,29 @@ func deployAgent(cmd *cobra.Command) {
 	}
 	
 	envVars, _ := cmd.Flags().GetStringSlice("env")
-	cpuLimit, _ := cmd.Flags().GetInt64("cpu")
-	memoryLimit, _ := cmd.Flags().GetInt64("memory")
+	cpuStr, _ := cmd.Flags().GetString("cpu")
+	memoryStr, _ := cmd.Flags().GetString("memory")
 	autoRestart, _ := cmd.Flags().GetBool("auto-restart")
 	token, _ := cmd.Flags().GetString("token")
 	portMappings, _ := cmd.Flags().GetStringSlice("port")
 	volumeMappings, _ := cmd.Flags().GetStringSlice("volume")
+	
+	// Parse CPU and memory limits using the same functions as YAML
+	var cpuLimit, memoryLimit int64
+	if cpuStr != "" {
+		cpu, err := config.ParseCPU(cpuStr)
+		if err != nil {
+			log.Fatalf("Invalid CPU limit: %v", err)
+		}
+		cpuLimit = cpu
+	}
+	if memoryStr != "" {
+		mem, err := config.ParseMemory(memoryStr)
+		if err != nil {
+			log.Fatalf("Invalid memory limit: %v", err)
+		}
+		memoryLimit = mem
+	}
 
 	if token == "" {
 		token = cfg.Security.DefaultToken

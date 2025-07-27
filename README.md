@@ -273,8 +273,8 @@ agentainer deploy \
   --volume ./config:/app/config:ro \   # Read-only config
   --env API_KEY=secret \               # Environment variables
   --env DEBUG=false \
-  --cpu 1000000000 \                   # CPU limit (1 core)
-  --memory 536870912 \                 # Memory limit (512MB)
+  --cpu 1 \                            # CPU limit (1 core)
+  --memory 512M \                      # Memory limit (512MB)
   --auto-restart \                     # Restart on failure
   --token custom-auth-token            # Custom auth token
 ```
@@ -301,8 +301,8 @@ spec:
       image: nginx:alpine
       replicas: 2
       resources:
-        memory: 256Mi
-        cpu: 500m
+        memory: 256M
+        cpu: 0.5
       volumes:
         - host: ./web-data
           container: /usr/share/nginx/html
@@ -313,7 +313,7 @@ spec:
       env:
         NODE_ENV: production
       resources:
-        memory: 512Mi
+        memory: 512M
         cpu: 1
 ```
 

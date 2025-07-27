@@ -229,14 +229,19 @@ type AgentConfig struct {
 	Volumes     []agent.VolumeMapping
 }
 
-// ParseCPU parses CPU limit strings (e.g., "500m", "2")
+// ParseCPU parses CPU limit strings
+// Accepts formats:
+//   - "0.5" or ".5" = half a CPU core  
+//   - "1" or "1.0" = 1 CPU core
+//   - "2" or "2.0" = 2 CPU cores
+//   - "500m" = 500 millicores (0.5 CPU) - for k8s compatibility
 func ParseCPU(cpu string) (int64, error) {
 	cpu = strings.TrimSpace(cpu)
 	if cpu == "" {
 		return 0, nil
 	}
 
-	// Handle millicpu notation (e.g., "500m" = 0.5 CPU)
+	// Handle millicpu notation for k8s compatibility (e.g., "500m" = 0.5 CPU)
 	if strings.HasSuffix(cpu, "m") {
 		milliStr := strings.TrimSuffix(cpu, "m")
 		var milli int64
@@ -248,49 +253,72 @@ func ParseCPU(cpu string) (int64, error) {
 		return milli * 1e6, nil
 	}
 
-	// Handle whole CPU notation (e.g., "2" = 2 CPUs)
+	// Handle decimal notation (e.g., "0.5", "1", "2.5")
 	var cores float64
 	_, err := fmt.Sscanf(cpu, "%f", &cores)
 	if err != nil {
-		return 0, fmt.Errorf("invalid CPU value: %s", cpu)
+		return 0, fmt.Errorf("invalid CPU value: %s (use formats like 0.5, 1, 2)", cpu)
 	}
+	
+	if cores <= 0 {
+		return 0, fmt.Errorf("CPU value must be positive: %s", cpu)
+	}
+	
 	return int64(cores * 1e9), nil
 }
 
-// ParseMemory parses memory limit strings (e.g., "512Mi", "2Gi")
+// ParseMemory parses memory limit strings
+// Accepts formats:
+//   - "512M" or "512m" = 512 megabytes
+//   - "2G" or "2g" = 2 gigabytes  
+//   - "1.5G" or "1.5g" = 1.5 gigabytes
+//   - "512Mi" = 512 mebibytes (k8s style)
+//   - "2Gi" = 2 gibibytes (k8s style)
 func ParseMemory(mem string) (int64, error) {
 	mem = strings.TrimSpace(mem)
 	if mem == "" {
 		return 0, nil
 	}
 
-	// Handle different suffixes
-	suffixes := map[string]int64{
-		"Ki": 1024,
-		"Mi": 1024 * 1024,
-		"Gi": 1024 * 1024 * 1024,
-		"K":  1000,
-		"M":  1000 * 1000,
-		"G":  1000 * 1000 * 1000,
+	// Convert to uppercase for case-insensitive comparison
+	upperMem := strings.ToUpper(mem)
+	
+	// Define suffixes with their multipliers
+	// Support both simple (M, G) and k8s-style (Mi, Gi) formats
+	suffixes := []struct{
+		suffix string
+		multiplier int64
+	}{
+		// K8s-style binary units (more precise)
+		{"GI", 1024 * 1024 * 1024},
+		{"MI", 1024 * 1024},
+		{"KI", 1024},
+		// Simple units (what most users expect)
+		{"G", 1000 * 1000 * 1000},
+		{"M", 1000 * 1000},
+		{"K", 1000},
 	}
 
-	for suffix, multiplier := range suffixes {
-		if strings.HasSuffix(mem, suffix) {
-			valueStr := strings.TrimSuffix(mem, suffix)
-			var value int64
-			_, err := fmt.Sscanf(valueStr, "%d", &value)
+	for _, s := range suffixes {
+		if strings.HasSuffix(upperMem, s.suffix) {
+			valueStr := mem[:len(mem)-len(s.suffix)]
+			var value float64
+			_, err := fmt.Sscanf(valueStr, "%f", &value)
 			if err != nil {
 				return 0, fmt.Errorf("invalid memory value: %s", mem)
 			}
-			return value * multiplier, nil
+			if value <= 0 {
+				return 0, fmt.Errorf("memory value must be positive: %s", mem)
+			}
+			return int64(value * float64(s.multiplier)), nil
 		}
 	}
 
-	// No suffix means bytes
+	// No suffix means bytes (for backward compatibility)
 	var bytes int64
 	_, err := fmt.Sscanf(mem, "%d", &bytes)
 	if err != nil {
-		return 0, fmt.Errorf("invalid memory value: %s", mem)
+		return 0, fmt.Errorf("invalid memory value: %s (use formats like 512M, 2G, 1.5G)", mem)
 	}
 	return bytes, nil
 }
