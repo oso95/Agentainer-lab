@@ -15,6 +15,7 @@ type Config struct {
 	Storage  StorageConfig  `mapstructure:"storage"`
 	Docker   DockerConfig   `mapstructure:"docker"`
 	Security SecurityConfig `mapstructure:"security"`
+	Features FeaturesConfig `mapstructure:"features"`
 }
 
 type ServerConfig struct {
@@ -41,6 +42,10 @@ type SecurityConfig struct {
 	DefaultToken string `mapstructure:"default_token"`
 }
 
+type FeaturesConfig struct {
+	RequestPersistence bool `mapstructure:"request_persistence"`
+}
+
 func LoadConfig() (*Config, error) {
 	config := &Config{}
 	
@@ -62,6 +67,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("storage.data_dir", defaultDataDir)
 	viper.SetDefault("docker.host", "unix:///var/run/docker.sock")
 	viper.SetDefault("security.default_token", "agentainer-default-token")
+	viper.SetDefault("features.request_persistence", true)
 
 	viper.SetEnvPrefix("AGENTAINER")
 	viper.AutomaticEnv()

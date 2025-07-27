@@ -16,3 +16,6 @@ docker:
 
 security:
   default_token: agentainer-default-token
+
+features:
+  request_persistence: true

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,19 +10,23 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/mux"
 	"github.com/agentainer/agentainer-lab/internal/agent"
 	"github.com/agentainer/agentainer-lab/internal/config"
+	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
 )
 
 type Server struct {
-	config      *config.Config
-	agentMgr    *agent.Manager
-	storage     *storage.Storage
+	config           *config.Config
+	agentMgr         *agent.Manager
+	storage          *storage.Storage
 	metricsCollector *metrics.Collector
+	requestMgr       *requests.Manager
 }
 
 type DeployRequest struct {
@@ -42,12 +47,13 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.Storage, metricsCollector *metrics.Collector) *Server {
+func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.Storage, metricsCollector *metrics.Collector, redisClient *redis.Client) *Server {
 	return &Server{
-		config:      config,
-		agentMgr:    agentMgr,
-		storage:     storage,
+		config:           config,
+		agentMgr:         agentMgr,
+		storage:          storage,
 		metricsCollector: metricsCollector,
+		requestMgr:       requests.NewManager(redisClient),
 	}
 }
 
@@ -67,6 +73,11 @@ func (s *Server) Start() error {
 	r.HandleFunc("/agents/{id}/logs", s.getLogsHandler).Methods("GET")
 	r.HandleFunc("/agents/{id}/invoke", s.invokeAgentHandler).Methods("POST")
 	r.HandleFunc("/agents/{id}/metrics", s.getMetricsHandler).Methods("GET")
+	
+	// Request management endpoints
+	r.HandleFunc("/agents/{id}/requests", s.getAgentRequestsHandler).Methods("GET")
+	r.HandleFunc("/agents/{id}/requests/{reqId}", s.getRequestHandler).Methods("GET")
+	r.HandleFunc("/agents/{id}/requests/{reqId}/replay", s.replayRequestHandler).Methods("POST")
 	
 	// Proxy routes - catch-all for agent requests
 	r.PathPrefix("/agent/{id}/").HandlerFunc(s.proxyToAgentHandler)
@@ -407,8 +418,49 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 	
 	// Check if agent is running
 	if agentObj.Status != agent.StatusRunning {
+		// If agent is not running, check if request persistence is enabled
+		if s.config.Features.RequestPersistence {
+			// Store the request for later replay
+			ctx := r.Context()
+			storedReq, err := s.requestMgr.StoreRequest(ctx, agentID, r)
+			if err != nil {
+				s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to store request: %v", err))
+				return
+			}
+			
+			s.sendResponse(w, http.StatusAccepted, Response{
+				Success: true,
+				Message: "Agent is not running. Request queued for replay when agent starts.",
+				Data: map[string]string{
+					"request_id": storedReq.ID,
+					"status":     string(storedReq.Status),
+				},
+			})
+			return
+		}
+		
 		s.sendError(w, http.StatusServiceUnavailable, "Agent is not running")
 		return
+	}
+	
+	// Store request if persistence is enabled (skip if this is a replay)
+	var requestID string
+	isReplay := r.Header.Get("X-Agentainer-Replay") == "true"
+	
+	if s.config.Features.RequestPersistence && !isReplay {
+		ctx := r.Context()
+		storedReq, err := s.requestMgr.StoreRequest(ctx, agentID, r)
+		if err != nil {
+			// Log but don't fail the request
+			fmt.Printf("Warning: Failed to store request: %v\n", err)
+		} else {
+			requestID = storedReq.ID
+			// Add request ID to headers for tracking
+			r.Header.Set("X-Agentainer-Request-ID", requestID)
+		}
+	} else if isReplay {
+		// For replays, get the request ID from header
+		requestID = r.Header.Get("X-Agentainer-Request-ID")
 	}
 	
 	// In the new architecture, we connect to the agent using its container name
@@ -422,9 +474,6 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Create reverse proxy
-	proxy := httputil.NewSingleHostReverseProxy(targetURL)
-	
 	// Modify the request path to remove the /agent/{id} prefix
 	originalPath := r.URL.Path
 	r.URL.Path = strings.TrimPrefix(originalPath, fmt.Sprintf("/agent/%s", agentID))
@@ -432,13 +481,186 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/"
 	}
 	
+	// Create custom transport to intercept response
+	transport := &interceptTransport{
+		base:       http.DefaultTransport,
+		requestMgr: s.requestMgr,
+		agentID:    agentID,
+		requestID:  requestID,
+	}
+	
+	// Create reverse proxy with custom transport
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.Transport = transport
+	
 	// Forward the request
 	proxy.ServeHTTP(w, r)
+}
+
+// interceptTransport wraps http.RoundTripper to capture responses
+type interceptTransport struct {
+	base       http.RoundTripper
+	requestMgr *requests.Manager
+	agentID    string
+	requestID  string
+}
+
+func (t *interceptTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Forward the request
+	resp, err := t.base.RoundTrip(req)
+	
+	// Store the response if we have a request ID
+	if t.requestID != "" && resp != nil {
+		ctx := context.Background()
+		if storeErr := t.requestMgr.StoreResponse(ctx, t.agentID, t.requestID, resp); storeErr != nil {
+			// Log but don't fail
+			fmt.Printf("Warning: Failed to store response: %v\n", storeErr)
+		}
+	}
+	
+	// Mark request as failed if there was an error
+	if t.requestID != "" && err != nil {
+		ctx := context.Background()
+		if markErr := t.requestMgr.MarkRequestFailed(ctx, t.agentID, t.requestID, err); markErr != nil {
+			fmt.Printf("Warning: Failed to mark request as failed: %v\n", markErr)
+		}
+	}
+	
+	return resp, err
 }
 
 func (s *Server) sendError(w http.ResponseWriter, statusCode int, message string) {
 	s.sendResponse(w, statusCode, Response{
 		Success: false,
 		Message: message,
+	})
+}
+
+// Request management handlers
+
+func (s *Server) getAgentRequestsHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	agentID := vars["id"]
+	
+	// Verify agent exists
+	if _, err := s.agentMgr.GetAgent(agentID); err != nil {
+		s.sendError(w, http.StatusNotFound, "Agent not found")
+		return
+	}
+	
+	// Get pending requests
+	ctx := r.Context()
+	pendingReqs, err := s.requestMgr.GetPendingRequests(ctx, agentID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get requests: %v", err))
+		return
+	}
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "Requests retrieved successfully",
+		Data: map[string]interface{}{
+			"agent_id": agentID,
+			"pending":  pendingReqs,
+			"count":    len(pendingReqs),
+		},
+	})
+}
+
+func (s *Server) getRequestHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	agentID := vars["id"]
+	requestID := vars["reqId"]
+	
+	// Get request from storage
+	key := fmt.Sprintf("agent:%s:requests:%s", agentID, requestID)
+	data, err := s.storage.Get(r.Context(), key)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "Request not found")
+		return
+	}
+	
+	var request requests.Request
+	if err := json.Unmarshal([]byte(data), &request); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "Failed to parse request")
+		return
+	}
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "Request retrieved successfully",
+		Data:    request,
+	})
+}
+
+func (s *Server) replayRequestHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	agentID := vars["id"]
+	requestID := vars["reqId"]
+	
+	// Get request from storage
+	key := fmt.Sprintf("agent:%s:requests:%s", agentID, requestID)
+	data, err := s.storage.Get(r.Context(), key)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "Request not found")
+		return
+	}
+	
+	var storedReq requests.Request
+	if err := json.Unmarshal([]byte(data), &storedReq); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "Failed to parse request")
+		return
+	}
+	
+	// Check if agent is running
+	agent, err := s.agentMgr.GetAgent(agentID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "Agent not found")
+		return
+	}
+	
+	if agent.Status != "running" {
+		s.sendError(w, http.StatusServiceUnavailable, "Agent is not running")
+		return
+	}
+	
+	// Recreate the HTTP request
+	targetURL := fmt.Sprintf("http://%s:8000%s", agentID, storedReq.Path)
+	httpReq, err := http.NewRequest(storedReq.Method, targetURL, bytes.NewReader(storedReq.Body))
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "Failed to create request")
+		return
+	}
+	
+	// Restore headers
+	for k, v := range storedReq.Headers {
+		httpReq.Header.Set(k, v)
+	}
+	
+	// Execute the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		// Mark as failed
+		ctx := r.Context()
+		s.requestMgr.MarkRequestFailed(ctx, agentID, requestID, err)
+		s.sendError(w, http.StatusBadGateway, fmt.Sprintf("Failed to replay request: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	
+	// Store the new response
+	ctx := r.Context()
+	if err := s.requestMgr.StoreResponse(ctx, agentID, requestID, resp); err != nil {
+		fmt.Printf("Warning: Failed to store replay response: %v\n", err)
+	}
+	
+	s.sendResponse(w, http.StatusOK, Response{
+		Success: true,
+		Message: "Request replayed successfully",
+		Data: map[string]interface{}{
+			"request_id":  requestID,
+			"status_code": resp.StatusCode,
+		},
 	})
 }

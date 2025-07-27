@@ -2,19 +2,23 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/spf13/cobra"
 	"github.com/agentainer/agentainer-lab/internal/agent"
 	"github.com/agentainer/agentainer-lab/internal/api"
 	"github.com/agentainer/agentainer-lab/internal/config"
+	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
 	"github.com/agentainer/agentainer-lab/pkg/docker"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
@@ -191,6 +195,19 @@ This operation is irreversible. Use with caution.`,
 	},
 }
 
+var requestsCmd = &cobra.Command{
+	Use:   "requests [agent-id]",
+	Short: "View pending requests for an agent",
+	Long: `View and manage persisted requests for an agent.
+
+This shows requests that were sent to the agent while it was not running,
+and are queued for replay when the agent starts.`,
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		viewRequests(args[0])
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.agentainer/config.yaml)")
 
@@ -219,6 +236,7 @@ func init() {
 	rootCmd.AddCommand(logsCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(invokeCmd)
+	rootCmd.AddCommand(requestsCmd)
 }
 
 func runServer() {
@@ -243,7 +261,17 @@ func runServer() {
 	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
 	metricsCollector := metrics.NewCollector(dockerClient, storage)
 
-	server := api.NewServer(cfg, agentMgr, storage, metricsCollector)
+	server := api.NewServer(cfg, agentMgr, storage, metricsCollector, redisClient)
+
+	// Start replay worker if request persistence is enabled
+	if cfg.Features.RequestPersistence {
+		requestMgr := requests.NewManager(redisClient)
+		replayWorker := requests.NewReplayWorker(requestMgr, redisClient)
+		go replayWorker.Start(ctx)
+		defer replayWorker.Stop()
+		
+		log.Println("Request persistence and replay enabled")
+	}
 
 	go func() {
 		if err := server.Start(); err != nil {
@@ -556,4 +584,60 @@ func parseVolumeMappings(volumeMappings []string) ([]agent.VolumeMapping, error)
 	}
 	
 	return volumes, nil
+}
+
+func viewRequests(agentID string) {
+	
+	// Create HTTP client
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	// Make API request to get pending requests
+	url := fmt.Sprintf("http://localhost:%d/agents/%s/requests", cfg.Server.Port, agentID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to get requests: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// Parse response
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("API error: %s", apiResp.Message)
+	}
+	
+	// Display requests
+	data := apiResp.Data.(map[string]interface{})
+	pendingReqs := data["pending"].([]interface{})
+	
+	if len(pendingReqs) == 0 {
+		fmt.Printf("No pending requests for agent %s\n", agentID)
+		return
+	}
+	
+	fmt.Printf("Pending requests for agent %s:\n", agentID)
+	fmt.Println(strings.Repeat("-", 80))
+	
+	for _, req := range pendingReqs {
+		r := req.(map[string]interface{})
+		fmt.Printf("ID: %s\n", r["id"])
+		fmt.Printf("Method: %s %s\n", r["method"], r["path"])
+		fmt.Printf("Status: %s\n", r["status"])
+		fmt.Printf("Created: %s\n", r["created_at"])
+		if retries, ok := r["retry_count"].(float64); ok && retries > 0 {
+			fmt.Printf("Retries: %d/%d\n", int(retries), int(r["max_retries"].(float64)))
+		}
+		fmt.Println(strings.Repeat("-", 80))
+	}
 }
