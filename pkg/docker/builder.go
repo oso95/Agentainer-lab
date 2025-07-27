@@ -146,6 +146,30 @@ func (b *ImageBuilder) BuildImage(ctx context.Context, dockerfilePath, imageName
 		if stream, ok := message["stream"].(string); ok {
 			stream = strings.TrimSpace(stream)
 			if stream != "" {
+				// Filter out pip warnings and notices
+				if strings.Contains(stream, "WARNING:") ||
+					strings.Contains(stream, "[notice]") ||
+					strings.Contains(stream, "pip install --upgrade pip") {
+					continue
+				}
+				
+				// Simplify pip installation messages
+				if strings.Contains(stream, "Installing collected packages:") {
+					// Extract package names and create a summary
+					parts := strings.Split(stream, ":")
+					if len(parts) > 1 {
+						packages := strings.TrimSpace(parts[1])
+						// Truncate if too long
+						if len(packages) > 60 {
+							packages = packages[:57] + "..."
+						}
+						stream = "Installing packages: " + packages
+					}
+				} else if strings.Contains(stream, "Successfully installed") {
+					stream = "✓ Packages installed successfully"
+				}
+				
+				// Send cleaned progress message
 				progressChan <- stream
 			}
 		}

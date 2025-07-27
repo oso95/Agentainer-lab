@@ -412,13 +412,21 @@ func deployAgent(cmd *cobra.Command) {
 					}
 					// Clear previous line and print new message
 					if lastMsg != "" {
-						fmt.Printf("\r%-80s", " ") // Clear line
+						fmt.Printf("\r%-120s", " ") // Clear line with more space
 					}
+					
+					// Truncate long messages
+					displayMsg := msg
+					if len(msg) > 100 {
+						displayMsg = msg[:97] + "..."
+					}
+					
 					if strings.HasPrefix(msg, "Step ") || strings.HasPrefix(msg, "Successfully ") {
-						fmt.Printf("\r%s %s\n", spinner[spinIdx], msg)
+						fmt.Printf("\r%s %s\n", spinner[spinIdx], displayMsg)
+						lastMsg = ""
 					} else {
-						fmt.Printf("\r%s %s", spinner[spinIdx], msg)
-						lastMsg = msg
+						fmt.Printf("\r%s %s", spinner[spinIdx], displayMsg)
+						lastMsg = displayMsg
 					}
 					spinIdx = (spinIdx + 1) % len(spinner)
 				case <-time.After(100 * time.Millisecond):
