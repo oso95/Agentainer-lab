@@ -400,7 +400,7 @@ See `examples/deployments/` for more YAML examples including:
 Agentainer provides two different endpoints for interacting with agents:
 
 #### 1. **Proxy Endpoint** (Access agent's service): `/agent/<id>/`
-Used to access the agent's actual service endpoints:
+Used to access the agent's actual service endpoints (no authentication required):
 ```bash
 # Routes requests to the agent's internal web service
 curl http://localhost:8081/agent/agent-123/
@@ -409,7 +409,7 @@ curl http://localhost:8081/agent/agent-123/api/v1/completions
 ```
 
 #### 2. **API Endpoint** (Manage agent): `/agents/<id>`
-Used to get agent information and control the agent via REST API:
+Used to get agent information and control the agent via REST API (requires authentication):
 ```bash
 # Get agent details, status, configuration
 curl http://localhost:8081/agents/agent-123 \
@@ -419,6 +419,10 @@ curl http://localhost:8081/agents/agent-123 \
 curl -X POST http://localhost:8081/agents/agent-123/start \
   -H "Authorization: Bearer agentainer-default-token"
 ```
+
+**Key Differences:**
+- **Proxy endpoint** (`/agent/<id>/`) - Public access, no auth required, routes to agent's service
+- **API endpoint** (`/agents/<id>`) - Requires auth token, manages agent lifecycle
 
 ### 📬 Request Persistence
 

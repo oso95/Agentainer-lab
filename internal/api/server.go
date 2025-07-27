@@ -64,41 +64,44 @@ func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.
 
 func (s *Server) Start() error {
 	r := mux.NewRouter()
-
+	
+	// Apply logging middleware to all routes
+	r.Use(s.loggingMiddleware)
+	
+	// Public endpoints (no auth required)
 	r.HandleFunc("/health", s.healthHandler).Methods("GET")
-	r.HandleFunc("/agents", s.deployAgentHandler).Methods("POST")
-	r.HandleFunc("/agents", s.listAgentsHandler).Methods("GET")
-	r.HandleFunc("/agents/{id}", s.getAgentHandler).Methods("GET")
-	r.HandleFunc("/agents/{id}/start", s.startAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}/stop", s.stopAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}/restart", s.restartAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}/pause", s.pauseAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}/resume", s.resumeAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}", s.removeAgentHandler).Methods("DELETE")
-	r.HandleFunc("/agents/{id}/logs", s.getLogsHandler).Methods("GET")
-	r.HandleFunc("/agents/{id}/invoke", s.invokeAgentHandler).Methods("POST")
-	r.HandleFunc("/agents/{id}/metrics", s.getMetricsHandler).Methods("GET")
+	
+	// Proxy routes - catch-all for agent requests (no auth required)
+	r.PathPrefix("/agent/{id}/").HandlerFunc(s.proxyToAgentHandler)
+	
+	// Protected API endpoints - create a subrouter with auth middleware
+	api := r.PathPrefix("/").Subrouter()
+	api.Use(s.authMiddleware)
+	
+	api.HandleFunc("/agents", s.deployAgentHandler).Methods("POST")
+	api.HandleFunc("/agents", s.listAgentsHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}", s.getAgentHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}/start", s.startAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/stop", s.stopAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/restart", s.restartAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/pause", s.pauseAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/resume", s.resumeAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}", s.removeAgentHandler).Methods("DELETE")
+	api.HandleFunc("/agents/{id}/logs", s.getLogsHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}/invoke", s.invokeAgentHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/metrics", s.getMetricsHandler).Methods("GET")
 	
 	// Request management endpoints
-	r.HandleFunc("/agents/{id}/requests", s.getAgentRequestsHandler).Methods("GET")
-	r.HandleFunc("/agents/{id}/requests/{reqId}", s.getRequestHandler).Methods("GET")
-	r.HandleFunc("/agents/{id}/requests/{reqId}/replay", s.replayRequestHandler).Methods("POST")
+	api.HandleFunc("/agents/{id}/requests", s.getAgentRequestsHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}/requests/{reqId}", s.getRequestHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}/requests/{reqId}/replay", s.replayRequestHandler).Methods("POST")
 	
 	// Health monitoring endpoints
-	r.HandleFunc("/agents/{id}/health", s.getAgentHealthHandler).Methods("GET")
-	r.HandleFunc("/health/agents", s.getAllHealthStatusesHandler).Methods("GET")
+	api.HandleFunc("/agents/{id}/health", s.getAgentHealthHandler).Methods("GET")
+	api.HandleFunc("/health/agents", s.getAllHealthStatusesHandler).Methods("GET")
 	
 	// Metrics endpoints
-	r.HandleFunc("/agents/{id}/metrics/history", s.getMetricsHistoryHandler).Methods("GET")
-	
-	// Web UI
-	r.PathPrefix("/web/").Handler(http.StripPrefix("/web/", http.FileServer(http.Dir("/app/web"))))
-	
-	// Proxy routes - catch-all for agent requests
-	r.PathPrefix("/agent/{id}/").HandlerFunc(s.proxyToAgentHandler)
-
-	r.Use(s.authMiddleware)
-	r.Use(s.loggingMiddleware)
+	api.HandleFunc("/agents/{id}/metrics/history", s.getMetricsHistoryHandler).Methods("GET")
 
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	
