@@ -10,7 +10,8 @@ BLUE := \033[0;34m
 NC := \033[0m # No Color
 
 .PHONY: all build clean test docker-build docker-run example-build run-redis stop-redis help \
-        install install-user uninstall uninstall-user verify setup install-prerequisites
+        install install-user uninstall uninstall-user verify setup install-prerequisites \
+        test-network test-persistence test-crash test-all
 
 # Default target
 all: help
@@ -23,9 +24,28 @@ build:
 build-prod:
 	go build -ldflags="-w -s" -o $(BINARY_NAME) ./cmd/agentainer
 
-# Run tests
+# Run Go tests
 test:
 	go test -v ./...
+
+# Run network isolation test
+test-network:
+	@chmod +x scripts/tests/test-network-isolation.sh
+	@./scripts/tests/test-network-isolation.sh
+
+# Run request persistence tests
+test-persistence:
+	@chmod +x scripts/tests/test-persistence-final.sh
+	@./scripts/tests/test-persistence-final.sh
+
+# Run crash resilience test
+test-crash:
+	@chmod +x scripts/tests/test-crash-simple.sh
+	@./scripts/tests/test-crash-simple.sh
+
+# Run all integration tests
+test-all: test test-network test-persistence test-crash
+	@echo "$(GREEN)All tests completed!$(NC)"
 
 # Clean build artifacts
 clean:
@@ -169,10 +189,16 @@ help:
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  $(GREEN)make build$(NC)          - Build the application"
 	@echo "  $(GREEN)make build-prod$(NC)     - Build with production optimizations"
-	@echo "  $(GREEN)make test$(NC)           - Run tests"
+	@echo "  $(GREEN)make test$(NC)           - Run Go unit tests"
 	@echo "  $(GREEN)make clean$(NC)          - Clean build artifacts"
 	@echo "  $(GREEN)make fmt$(NC)            - Format code"
 	@echo "  $(GREEN)make lint$(NC)           - Run linter"
+	@echo ""
+	@echo "$(YELLOW)Integration Tests:$(NC)"
+	@echo "  $(GREEN)make test-network$(NC)    - Test network isolation"
+	@echo "  $(GREEN)make test-persistence$(NC) - Test request persistence"
+	@echo "  $(GREEN)make test-crash$(NC)     - Test crash resilience"
+	@echo "  $(GREEN)make test-all$(NC)       - Run all tests"
 	@echo ""
 	@echo "$(YELLOW)Docker:$(NC)"
 	@echo "  $(GREEN)make docker-build$(NC)   - Build Docker image"
