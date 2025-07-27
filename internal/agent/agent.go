@@ -345,6 +345,26 @@ func (m *Manager) Remove(ctx context.Context, agentID string) error {
 		// Log but don't fail if Redis deletion fails
 		log.Printf("Warning: failed to remove agent from cache: %v", err)
 	}
+	
+	// Clean up any request queues for this agent
+	requestKeys := []string{
+		fmt.Sprintf("agent:%s:requests:pending", agentID),
+		fmt.Sprintf("agent:%s:requests:completed", agentID),
+		fmt.Sprintf("agent:%s:requests:failed", agentID),
+	}
+	for _, key := range requestKeys {
+		if err := m.redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("Warning: failed to remove request queue %s: %v", key, err)
+		}
+	}
+	
+	// Also clean up any individual request data
+	iter := m.redisClient.Scan(ctx, 0, fmt.Sprintf("request:%s:*", agentID), 0).Iterator()
+	for iter.Next(ctx) {
+		if err := m.redisClient.Del(ctx, iter.Val()).Err(); err != nil {
+			log.Printf("Warning: failed to remove request %s: %v", iter.Val(), err)
+		}
+	}
 
 	return nil
 }
