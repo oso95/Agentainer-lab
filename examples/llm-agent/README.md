@@ -12,7 +12,29 @@ A flexible LLM agent that supports multiple providers (OpenAI GPT and Google Gem
 
 ## Quick Start
 
-### Option 1: Using OpenAI (GPT)
+### Setup Environment Variables
+
+Copy the example environment file and add your API keys:
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+### Option 1: Quick deployment with environment file (Recommended)
+
+```bash
+# After setting up your .env file
+./deploy-with-env.sh
+
+# The script will:
+# - Load your API keys from .env
+# - Validate required variables
+# - Deploy with automatic Dockerfile building
+# - Configure health checks and auto-restart
+```
+
+### Option 2: Using OpenAI (GPT) manually
 
 ```bash
 # Build the image
@@ -41,7 +63,7 @@ curl -X POST http://localhost:8081/agent/<agent-id>/chat \
   }'
 ```
 
-### Option 2: Using Google Gemini
+### Option 3: Using Google Gemini manually
 
 ```bash
 # Deploy with Gemini
