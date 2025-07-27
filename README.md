@@ -436,9 +436,29 @@ curl http://localhost:8081/agents/{id}/requests \
 
 ### Building Resilient Agents
 
-Agentainer supports building production-ready agents with automatic recovery and state persistence. Here are proven patterns for implementing resilient agent logic:
+Agentainer provides infrastructure-level resilience features:
+- **Automatic Request Replay**: Failed requests are queued and replayed when agents recover
+- **Crash Recovery**: Agents can be restarted with `agentainer resume` after any failure
+- **Persistent Volumes**: Mount volumes to preserve agent data across restarts
+
+However, your agent code needs to handle its own application-level state. Here are proven patterns for implementing resilient agent logic:
+
+#### Why These Patterns?
+
+While Agentainer handles:
+- ✅ Restarting crashed containers
+- ✅ Replaying failed HTTP requests
+- ✅ Preserving volume data
+
+Your agent code should handle:
+- ❌ Saving processing state between requests
+- ❌ Resuming interrupted batch operations
+- ❌ Graceful shutdown on SIGTERM
+- ❌ Checkpoint/restore for long-running tasks
 
 #### State Persistence Pattern
+
+**Use this when:** Your agent processes data in batches or maintains session state
 
 ```python
 # StatefulAgent: Maintains state across restarts
@@ -485,6 +505,8 @@ class StatefulAgent:
 ```
 
 #### Auto-Recovery Pattern
+
+**Use this when:** Your agent performs long-running operations that shouldn't restart from scratch
 
 ```python
 # SelfHealingAgent: Recovers from interruptions gracefully
@@ -552,6 +574,16 @@ agentainer deploy \
 # - Resume from last checkpoint on startup
 # - Have requests queued if it crashes
 ```
+
+#### Summary: Division of Responsibilities
+
+| Feature | Agentainer Provides | Your Agent Code Handles |
+|---------|-------------------|------------------------|
+| Container restart | ✅ Auto-restart on crash | Save state before crash |
+| HTTP requests | ✅ Queue & replay failed requests | Process requests idempotently |
+| Storage | ✅ Persistent volume mounts | Read/write state files |
+| Networking | ✅ Proxy & internal network | Handle connection errors |
+| Lifecycle | ✅ Start/stop/pause/resume | Graceful shutdown logic |
 
 ### Multi-Agent Deployment
 
