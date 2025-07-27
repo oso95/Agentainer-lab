@@ -382,20 +382,10 @@ func (m *Manager) ListAgents(token string) ([]Agent, error) {
 		return nil, err
 	}
 	
-	// If no token provided, return all agents (for CLI usage)
-	if token == "" {
-		return allAgents, nil
-	}
-	
-	// Filter agents by token
-	var filteredAgents []Agent
-	for _, agent := range allAgents {
-		if agent.Token == token {
-			filteredAgents = append(filteredAgents, agent)
-		}
-	}
-	
-	return filteredAgents, nil
+	// Always return all agents - filtering by token is deprecated
+	// in the network-isolated architecture where tokens are only
+	// used for API authentication, not agent ownership
+	return allAgents, nil
 }
 
 func (m *Manager) GetLogs(ctx context.Context, agentID string, follow bool) (io.ReadCloser, error) {
