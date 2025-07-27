@@ -51,7 +51,7 @@
 
 **🐳 Container-Native**
 - Docker-based isolation
-- Auto-port assignment (9000-9999)
+- Internal network architecture
 - Persistent volume mounting
 - Smart proxy routing
 
@@ -69,15 +69,22 @@
 </td>
 <td width="50%">
 
-**📊 Observability**
+**📊 Advanced Features**
+- Request persistence & replay
+- Crash resilience
 - Real-time container logs
-- Basic metrics collection
 - Health check endpoints
-- Agent state monitoring
 
 </td>
 </tr>
 </table>
+
+### 🆕 What's New
+
+- **Network Isolation**: Agents now run in isolated internal networks with no direct port exposure
+- **Request Persistence**: Automatic queuing and replay of requests to unavailable agents
+- **Crash Resilience**: Requests are preserved even if agents crash mid-processing
+- **Simplified Installation**: All operations now through unified `make` commands
 
 ---
 
@@ -104,21 +111,20 @@
 - **Redis** (or use Docker Compose)
 - **Git** (for cloning the repository)
 
-> **Note**: The setup.sh script can install all prerequisites automatically on fresh Ubuntu/Debian VMs.
+> **Note**: Use `make setup` to install all prerequisites automatically on fresh VMs.
 
 ### Installation
 
 <details>
-<summary><b>Option 1: Quick Install (Recommended)</b></summary>
+<summary><b>Option 1: Quick Setup (Recommended for Fresh VMs)</b></summary>
 
 ```bash
-# For fresh VMs - installs all prerequisites (Git, Go, Docker, Docker Compose)
-curl -fsSL https://raw.githubusercontent.com/oso95/Agentainer-lab/main/setup.sh | bash
-
-# Or if you already have prerequisites:
+# Clone the repository
 git clone https://github.com/oso95/Agentainer-lab.git
 cd agentainer-lab
-./install.sh
+
+# Complete setup (installs prerequisites + Agentainer)
+make setup
 
 # Update your PATH
 source ~/.bashrc
@@ -131,13 +137,18 @@ agentainer server
 </details>
 
 <details>
-<summary><b>Option 2: Using Make</b></summary>
+<summary><b>Option 2: Standard Installation</b></summary>
 
 ```bash
-# Clone and install
+# Clone the repository
 git clone https://github.com/oso95/Agentainer-lab.git
 cd agentainer-lab
-make quick-install
+
+# Install Agentainer (assumes prerequisites are installed)
+make install-user
+
+# Update your PATH
+source ~/.bashrc
 
 # Start services
 docker-compose up -d redis
@@ -160,34 +171,52 @@ docker-compose up -d
 
 </details>
 
+### Verify Installation
+
+```bash
+# Check that everything is installed correctly
+make verify
+```
+
 ### Your First Agent
 
 ```bash
-# Deploy an agent with auto-assigned port
+# Deploy an agent
 agentainer deploy --name my-first-agent --image nginx:latest
 
 # Start the agent
 agentainer start <agent-id>
 
-# Access your agent (three methods):
-# Direct: http://localhost:9001                      # Direct to container
-# Proxy:  http://localhost:8081/agent/<agent-id>/    # Through proxy
-# API:    http://localhost:8081/agents/<agent-id>    # Get agent info
+# Access your agent through the proxy:
+curl http://localhost:8081/agent/<agent-id>/
+
+# Check agent status via API:
+curl http://localhost:8081/agents/<agent-id> \
+  -H "Authorization: Bearer agentainer-default-token"
 ```
 
 ---
 
 ## 🏗️ Architecture
 
-### Agent-as-a-Service Model
+### Network-Isolated Agent Model
 
-Each agent runs as an isolated microservice with:
+Each agent runs in complete isolation with:
 
 - **🔒 Container Isolation**: Dedicated Docker container per agent
-- **💾 Persistent Identity**: Survives restarts and updates  
-- **📁 Stateful Operation**: Volume mounts for data persistence
-- **🌐 Network Isolation**: Unique port in 9000-9999 range
-- **🔗 Unified Access**: Consistent proxy routing pattern
+- **🌐 Internal Network**: Agents communicate only through the proxy
+- **🚫 No Direct Ports**: No external port exposure for security
+- **💾 Persistent Storage**: Volume mounts for data persistence
+- **🔗 Unified Access**: All access through proxy at port 8081
+
+### Request Persistence & Replay
+
+Agentainer ensures reliable message delivery with:
+
+- **📬 Request Queuing**: Stores requests when agents are unavailable
+- **🔄 Automatic Replay**: Replays queued requests when agents start
+- **💪 Crash Resilience**: Preserves requests even during agent crashes
+- **📊 Status Tracking**: Monitor pending/completed/failed requests
 
 ### Agent Lifecycle States
 
@@ -198,7 +227,7 @@ stateDiagram-v2
     Running --> Stopped: Stop/Crash
     Running --> Paused: Pause
     Paused --> Running: Resume
-    Stopped --> Running: Resume
+    Stopped --> Running: Resume/Start
     Created --> Running: Resume
     Running --> [*]: Remove
     Stopped --> [*]: Remove
@@ -225,6 +254,7 @@ stateDiagram-v2
 | `remove` | Remove agent completely | `agentainer remove agent-123` |
 | `list` | List all agents | `agentainer list` |
 | `logs` | View agent logs | `agentainer logs agent-123 --follow` |
+| `requests` | View pending requests | `agentainer requests agent-123` |
 
 </details>
 
@@ -235,7 +265,6 @@ stateDiagram-v2
 agentainer deploy \
   --name production-agent \
   --image my-agent:v1.0 \
-  --port 8080:8000/tcp \              # Custom port mapping
   --volume ./data:/app/data \          # Persistent storage
   --volume ./config:/app/config:ro \   # Read-only config
   --env API_KEY=secret \               # Environment variables
@@ -245,6 +274,8 @@ agentainer deploy \
   --auto-restart \                     # Restart on failure
   --token custom-auth-token            # Custom auth token
 ```
+
+> **Note**: Direct port mappings (`--port`) are deprecated for security. All agent access is through the proxy.
 
 </details>
 
@@ -259,26 +290,38 @@ agentainer deploy \
 
 ### 🌐 Access Methods
 
-Agents can be accessed three ways:
+All agents are accessed through the secure proxy:
 
-1. **Direct Access**: `http://localhost:<port>`
-   ```bash
-   # Auto-assigned port shown after deployment
-   curl http://localhost:9001
-   ```
+**Proxy Access**: `http://localhost:8081/agent/<id>/`
+```bash
+# Routes to agent's internal endpoints
+curl http://localhost:8081/agent/agent-123/
+curl http://localhost:8081/agent/agent-123/api/status
+```
 
-2. **Proxy Access** (Recommended): `http://localhost:8081/agent/<id>/`
-   ```bash
-   # Routes to agent's internal endpoints
-   curl http://localhost:8081/agent/agent-123/api/status
-   ```
+**API Access**: `http://localhost:8081/agents/<id>`
+```bash
+# Get agent information via REST API
+curl http://localhost:8081/agents/agent-123 \
+  -H "Authorization: Bearer agentainer-default-token"
+```
 
-3. **API Access**: `http://localhost:8081/agents/<id>`
-   ```bash
-   # Get agent information via REST API
-   curl http://localhost:8081/agents/agent-123 \
-     -H "Authorization: Bearer agentainer-default-token"
-   ```
+### 📬 Request Persistence
+
+When request persistence is enabled (default), Agentainer automatically:
+
+1. **Queues requests** sent to stopped/crashed agents
+2. **Replays requests** when agents become available
+3. **Tracks status** of all requests (pending/completed/failed)
+4. **Preserves requests** even if agents crash mid-processing
+
+```bash
+# View pending requests for an agent
+agentainer requests agent-123
+
+# Requests are automatically replayed when you start the agent
+agentainer start agent-123
+```
 
 ---
 
@@ -301,6 +344,9 @@ Agents can be accessed three ways:
 | DELETE | `/agents/{id}` | Remove agent |
 | GET | `/agents/{id}/logs` | Get agent logs |
 | GET | `/agents/{id}/metrics` | Get agent metrics |
+| GET | `/agents/{id}/requests` | Get pending requests |
+| GET | `/agents/{id}/requests/{reqId}` | Get specific request |
+| POST | `/agents/{id}/requests/{reqId}/replay` | Manually replay request |
 | ANY | `/agent/{id}/*` | Proxy to agent |
 
 </details>
@@ -316,7 +362,6 @@ curl -X POST http://localhost:8081/agents \
   -d '{
     "name": "api-agent",
     "image": "my-api:latest",
-    "ports": [{"host_port": 8080, "container_port": 80}],
     "volumes": [{"host_path": "./data", "container_path": "/data"}],
     "env_vars": {"NODE_ENV": "production"}
   }'
@@ -327,6 +372,10 @@ curl -X POST http://localhost:8081/agents/{id}/start \
 
 # Stream logs
 curl http://localhost:8081/agents/{id}/logs?follow=true \
+  -H "Authorization: Bearer agentainer-default-token"
+
+# Check pending requests
+curl http://localhost:8081/agents/{id}/requests \
   -H "Authorization: Bearer agentainer-default-token"
 ```
 
@@ -437,39 +486,6 @@ class SelfHealingAgent:
                 print(f"Resumed from checkpoint: {len(self.pending_tasks)} tasks pending")
 ```
 
-#### Redis-Based Distributed State
-
-```python
-# For agents that need distributed state management
-import redis
-import json
-
-class DistributedAgent:
-    def __init__(self, agent_id):
-        self.agent_id = agent_id
-        self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
-        self.state_key = f'agent:{self.agent_id}:state'
-        
-    def save_state(self, state):
-        """Save state to Redis"""
-        self.redis.set(self.state_key, json.dumps(state))
-        # Optional: Set expiration for temporary state
-        # self.redis.expire(self.state_key, 3600)  # 1 hour
-        
-    def load_state(self):
-        """Load state from Redis"""
-        state_data = self.redis.get(self.state_key)
-        return json.loads(state_data) if state_data else {}
-        
-    def publish_event(self, event_type, data):
-        """Publish events for inter-agent communication"""
-        channel = f'agent:events:{event_type}'
-        self.redis.publish(channel, json.dumps({
-            'agent_id': self.agent_id,
-            'data': data
-        }))
-```
-
 #### Deployment with Persistence
 
 ```bash
@@ -485,34 +501,7 @@ agentainer deploy \
 # - Save state to /app/data (persisted on host)
 # - Automatically restart on failure
 # - Resume from last checkpoint on startup
-```
-
-#### Health Check Implementation
-
-```python
-# Implement health checks for automatic recovery
-from flask import Flask, jsonify
-
-app = Flask(__name__)
-
-@app.route('/health')
-def health_check():
-    """Health endpoint for Agentainer monitoring"""
-    try:
-        # Check critical components
-        if not check_database_connection():
-            return jsonify({"status": "unhealthy", "reason": "database"}), 503
-            
-        if not check_queue_status():
-            return jsonify({"status": "unhealthy", "reason": "queue"}), 503
-            
-        return jsonify({
-            "status": "healthy",
-            "uptime": get_uptime(),
-            "processed": get_processed_count()
-        }), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 503
+# - Have requests queued if it crashes
 ```
 
 ### Multi-Agent Deployment
@@ -527,6 +516,8 @@ agentainer deploy --name data-storage --image storage:latest
 agentainer start data-collector
 agentainer start data-processor
 agentainer start data-storage
+
+# All agents are isolated and communicate through the proxy
 ```
 
 ---
@@ -542,25 +533,43 @@ agentainer-lab/
 │   ├── agent/          # Agent lifecycle
 │   ├── api/            # REST API server
 │   ├── config/         # Configuration
+│   ├── requests/       # Request persistence
 │   └── storage/        # Redis storage
 ├── pkg/                # Public packages
 │   ├── docker/         # Docker client
 │   └── metrics/        # Metrics collection
+├── scripts/            # Helper scripts
+│   ├── tests/          # Test scripts
+│   └── deprecated/     # Legacy scripts
 ├── examples/           # Example agents
-└── data/              # Runtime storage
+└── docs/              # Documentation
 ```
 
 ### Building from Source
 
 ```bash
 # Development build
-go build -o agentainer ./cmd/agentainer
+make build
 
 # Production build
-go build -ldflags="-w -s" -o agentainer ./cmd/agentainer
+make build-prod
 
 # Run tests
 make test
+
+# Run integration tests
+make test-all
+```
+
+### Available Make Commands
+
+```bash
+make help              # Show all available commands
+make setup            # Complete setup for fresh VMs
+make verify           # Verify installation
+make test-network     # Test network isolation
+make test-persistence # Test request persistence
+make test-crash       # Test crash resilience
 ```
 
 ---
@@ -587,8 +596,9 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 | Docker daemon not running | Ensure Docker is running: `docker ps` |
 | Redis connection failed | Verify Redis: `redis-cli ping` |
 | Permission denied | Add user to docker group: `sudo usermod -aG docker $USER` |
-| Port conflicts | Check ports: `netstat -tulpn \| grep :8081` |
-| Agent deployment fails | Check image exists: `docker images` |
+| Agent not accessible | Check proxy endpoint: `http://localhost:8081/agent/<id>/` |
+| Requests not replaying | Check persistence is enabled in config.yaml |
+| Installation fails | Run `make verify` to check prerequisites |
 
 </details>
 
