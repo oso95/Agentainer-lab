@@ -416,34 +416,7 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Check if agent is running
-	if agentObj.Status != agent.StatusRunning {
-		// If agent is not running, check if request persistence is enabled
-		if s.config.Features.RequestPersistence {
-			// Store the request for later replay
-			ctx := r.Context()
-			storedReq, err := s.requestMgr.StoreRequest(ctx, agentID, r)
-			if err != nil {
-				s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to store request: %v", err))
-				return
-			}
-			
-			s.sendResponse(w, http.StatusAccepted, Response{
-				Success: true,
-				Message: "Agent is not running. Request queued for replay when agent starts.",
-				Data: map[string]string{
-					"request_id": storedReq.ID,
-					"status":     string(storedReq.Status),
-				},
-			})
-			return
-		}
-		
-		s.sendError(w, http.StatusServiceUnavailable, "Agent is not running")
-		return
-	}
-	
-	// Store request if persistence is enabled (skip if this is a replay)
+	// Store request if persistence is enabled (for both running and stopped agents)
 	var requestID string
 	isReplay := r.Header.Get("X-Agentainer-Replay") == "true"
 	
@@ -461,6 +434,25 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 	} else if isReplay {
 		// For replays, get the request ID from header
 		requestID = r.Header.Get("X-Agentainer-Request-ID")
+	}
+	
+	// Check if agent is running
+	if agentObj.Status != agent.StatusRunning {
+		if s.config.Features.RequestPersistence && requestID != "" {
+			// We already stored the request above
+			s.sendResponse(w, http.StatusAccepted, Response{
+				Success: true,
+				Message: "Agent is not running. Request queued for replay when agent starts.",
+				Data: map[string]string{
+					"request_id": requestID,
+					"status":     "pending",
+				},
+			})
+			return
+		}
+		
+		s.sendError(w, http.StatusServiceUnavailable, "Agent is not running")
+		return
 	}
 	
 	// In the new architecture, we connect to the agent using its container name
@@ -509,8 +501,8 @@ func (t *interceptTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// Forward the request
 	resp, err := t.base.RoundTrip(req)
 	
-	// Store the response if we have a request ID
-	if t.requestID != "" && resp != nil {
+	// Handle successful response
+	if t.requestID != "" && resp != nil && err == nil {
 		ctx := context.Background()
 		if storeErr := t.requestMgr.StoreResponse(ctx, t.agentID, t.requestID, resp); storeErr != nil {
 			// Log but don't fail
@@ -518,11 +510,21 @@ func (t *interceptTransport) RoundTrip(req *http.Request) (*http.Response, error
 		}
 	}
 	
-	// Mark request as failed if there was an error
+	// Handle connection failures (agent crashed or network issues)
 	if t.requestID != "" && err != nil {
 		ctx := context.Background()
-		if markErr := t.requestMgr.MarkRequestFailed(ctx, t.agentID, t.requestID, err); markErr != nil {
-			fmt.Printf("Warning: Failed to mark request as failed: %v\n", markErr)
+		// Check if this is a connection error (agent likely crashed)
+		if strings.Contains(err.Error(), "connection refused") || 
+		   strings.Contains(err.Error(), "no such host") ||
+		   strings.Contains(err.Error(), "dial tcp") {
+			fmt.Printf("Agent %s appears to have crashed during request %s: %v\n", 
+				t.agentID, t.requestID, err)
+			// The request remains in pending state and will be retried when agent restarts
+		} else {
+			// Other errors mark the request as failed
+			if markErr := t.requestMgr.MarkRequestFailed(ctx, t.agentID, t.requestID, err); markErr != nil {
+				fmt.Printf("Warning: Failed to mark request as failed: %v\n", markErr)
+			}
 		}
 	}
 	

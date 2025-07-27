@@ -618,8 +618,17 @@ func viewRequests(agentID string) {
 	}
 	
 	// Display requests
-	data := apiResp.Data.(map[string]interface{})
-	pendingReqs := data["pending"].([]interface{})
+	data, ok := apiResp.Data.(map[string]interface{})
+	if !ok {
+		fmt.Println("Unexpected response format")
+		return
+	}
+	
+	pendingReqs, ok := data["pending"].([]interface{})
+	if !ok {
+		fmt.Println("No pending requests data available")
+		return
+	}
 	
 	if len(pendingReqs) == 0 {
 		fmt.Printf("No pending requests for agent %s\n", agentID)
