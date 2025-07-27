@@ -113,8 +113,8 @@
 ### Prerequisites
 
 - **Go** 1.21 or higher
-- **Docker** and Docker Compose
-- **Redis** (or use Docker Compose)
+- **Docker** (for running agents)
+- **Redis** (install locally or run via Docker)
 - **Git** (for cloning the repository)
 
 > **Note**: Use `make setup` to install all prerequisites automatically on fresh VMs.
@@ -135,8 +135,14 @@ make setup
 # Update your PATH
 source ~/.bashrc
 
-# Start services
-docker-compose up -d redis
+# Start Redis (choose one):
+# Option A: Using Docker
+docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
+
+# Option B: Using system Redis
+# sudo systemctl start redis
+
+# Start Agentainer server
 agentainer server
 ```
 
@@ -156,26 +162,19 @@ make install-user
 # Update your PATH
 source ~/.bashrc
 
-# Start services
-docker-compose up -d redis
+# Start Redis (choose one):
+# Option A: Using Docker
+docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
+
+# Option B: Using system Redis
+# sudo systemctl start redis
+
+# Start Agentainer server
 agentainer server
 ```
 
 </details>
 
-<details>
-<summary><b>Option 3: Docker Compose</b></summary>
-
-```bash
-# Clone the repository
-git clone https://github.com/oso95/Agentainer-lab.git
-cd agentainer-lab
-
-# Start everything with Docker Compose
-docker-compose up -d
-```
-
-</details>
 
 ### Verify Installation
 
@@ -855,6 +854,16 @@ make test
 # Run integration tests
 make test-all
 ```
+
+### Note on Docker Compose
+
+The `docker-compose.yml` file is provided for development purposes only. **We do not recommend using docker-compose for running Agentainer** because:
+
+1. It creates a separate Redis instance that doesn't share state with your local CLI
+2. It adds unnecessary complexity for a tool designed to be simple
+3. The CLI and API would use different data stores, causing confusion
+
+For production use, run Agentainer directly on your host with a local or containerized Redis instance.
 
 ### Available Make Commands
 
