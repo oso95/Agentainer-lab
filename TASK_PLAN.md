@@ -4,6 +4,7 @@
 - **EPIC 1**: Network Architecture Refactor ✅ COMPLETED
 - **EPIC 2**: Request Persistence & Replay ✅ COMPLETED  
 - **EPIC 3**: Repository Structure Cleanup ✅ COMPLETED
+- **EPIC 4**: YAML Deployment Support ✅ COMPLETED
 
 ## Overview
 Transform Agentainer from a proof-of-concept to a production-ready, comprehensive open-source container runtime for LLM agents.
@@ -31,14 +32,14 @@ Transform Agentainer from a proof-of-concept to a production-ready, comprehensiv
 - Add network creation in manager initialization
 - Update CLI to remove port display for direct access
 
-### 1.2 YAML-Based Deployment (Optional Advanced Feature)
+### 1.2 YAML-Based Deployment (Optional Advanced Feature) ✅ COMPLETED (EPIC 4)
 **Priority: MEDIUM**
-- [ ] Add --config flag to existing deploy command
-- [ ] Support YAML configuration files as optional alternative
-- [ ] Batch deployment of multiple agents from single YAML
-- [ ] Environment variable substitution
-- [ ] Validation command for checking YAML files
-- [ ] Keep simple CLI as primary interface
+- [x] Add --config flag to existing deploy command
+- [x] Support YAML configuration files as optional alternative
+- [x] Batch deployment of multiple agents from single YAML
+- [x] Environment variable substitution
+- [ ] Validation command for checking YAML files (future enhancement)
+- [x] Keep simple CLI as primary interface
 
 **YAML Format Example (for --config flag):**
 ```yaml
