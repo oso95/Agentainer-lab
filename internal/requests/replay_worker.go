@@ -3,6 +3,7 @@ package requests
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -72,7 +73,9 @@ func (w *ReplayWorker) processAgents(ctx context.Context) {
 		}
 
 		// Check if agent is running
-		if !w.isAgentRunning(ctx, agentID) {
+		isRunning := w.isAgentRunning(ctx, agentID)
+		fmt.Printf("[ReplayWorker] Agent %s running status: %v\n", agentID, isRunning)
+		if !isRunning {
 			fmt.Printf("[ReplayWorker] Agent %s is not running, skipping\n", agentID)
 			continue
 		}
@@ -161,16 +164,28 @@ func (w *ReplayWorker) replayRequest(ctx context.Context, agentID string, req *R
 
 // isAgentRunning checks if an agent is running
 func (w *ReplayWorker) isAgentRunning(ctx context.Context, agentID string) bool {
-	// The agent manager stores just the status string in Redis
+	// Use the agent manager's GetAgent method to properly parse the agent data
 	key := fmt.Sprintf("agent:%s", agentID)
-	status, err := w.redisClient.Get(ctx, key).Result()
+	data, err := w.redisClient.Get(ctx, key).Result()
 	if err != nil {
-		// If not in Redis, agent might not have been started yet
+		// If not in Redis, agent doesn't exist
 		return false
 	}
 	
-	// Status is stored as a plain string
-	return status == "running"
+	// Parse the JSON to check status
+	// We need to import encoding/json for this
+	var agentData map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &agentData); err != nil {
+		fmt.Printf("[ReplayWorker] Failed to parse agent data for %s: %v\n", agentID, err)
+		return false
+	}
+	
+	// Check if status is "running"
+	if status, ok := agentData["status"].(string); ok {
+		return status == "running"
+	}
+	
+	return false
 }
 
 // extractAgentID extracts agent ID from Redis key
