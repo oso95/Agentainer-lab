@@ -20,9 +20,20 @@ fi
 
 # 3. Build Agentainer image
 echo "Building Agentainer image..."
-docker build -t agentainer:latest .
+if ! docker build -t agentainer:latest .; then
+    echo "Docker build failed. Trying alternative approach..."
+    # Try building without BuildKit which sometimes helps with credential issues
+    DOCKER_BUILDKIT=0 docker build -t agentainer:latest .
+fi
 
-# 4. Run Agentainer server as a container
+# 4. Stop existing server if running
+if docker ps -a | grep -q agentainer-server; then
+    echo "Stopping existing Agentainer server..."
+    docker stop agentainer-server >/dev/null 2>&1
+    docker rm agentainer-server >/dev/null 2>&1
+fi
+
+# 5. Run Agentainer server as a container
 echo "Starting Agentainer server..."
 docker run -d \
     --name agentainer-server \

@@ -205,6 +205,8 @@ Agents that process metrics and maintain rolling aggregations.
 - **Go 1.23+** (for building from source)
 - **Git** (for cloning)
 
+> **Note for macOS users**: When deploying from Dockerfiles, build the image first using `docker build`, then deploy the built image. This avoids Docker socket compatibility issues.
+
 ### Installation (< 2 minutes)
 
 ```bash
@@ -224,7 +226,7 @@ make run
 agentainer deploy --name hello-world --image nginx:latest
 
 # 2. Start it
-agentainer start hello-world
+agentainer start <agent-id>
 
 # 3. Access it (no auth needed for proxy)
 curl http://localhost:8081/agent/hello-world/
@@ -239,10 +241,15 @@ cp .env.example .env
 # Add your OpenAI API key to .env
 
 # 2. Deploy from Dockerfile
-agentainer deploy --name gpt-bot --image ./Dockerfile
+# For macOS users: Build the image first, then deploy
+docker build -t gpt-bot-image .
+agentainer deploy --name gpt-bot --image gpt-bot-image
+
+# For Linux users: Direct Dockerfile deployment works
+# agentainer deploy --name gpt-bot --image ./Dockerfile
 
 # 3. Start and test
-agentainer start gpt-bot
+agentainer start <agent-id>
 
 # 4. Chat with your agent
 curl -X POST http://localhost:8081/agent/gpt-bot/chat \
@@ -304,7 +311,7 @@ CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
 ```bash
 # Deploy and use
 agentainer deploy --name memory-bot --image ./Dockerfile
-agentainer start memory-bot
+agentainer start <agent-id>
 
 # First conversation
 curl -X POST http://localhost:8081/agent/memory-bot/chat \
@@ -433,11 +440,11 @@ agentainer deploy \
 | Command | Description | Example |
 |---------|-------------|---------|
 | `deploy` | Deploy a new agent | `agentainer deploy --name my-agent --image nginx` |
-| `start` | Start an agent | `agentainer start my-agent` |
-| `stop` | Stop an agent | `agentainer stop my-agent` |
-| `resume` | Resume crashed agent | `agentainer resume my-agent` |
+| `start` | Start an agent | `agentainer start <agent-id>` |
+| `stop` | Stop an agent | `agentainer stop <agent-id>` |
+| `resume` | Resume crashed agent | `agentainer resume <agent-id>` |
 | `list` | List all agents | `agentainer list` |
-| `logs` | View agent logs | `agentainer logs my-agent` |
+| `logs` | View agent logs | `agentainer logs <agent-id>` |
 
 **[📖 Full Documentation →](docs/)** including:
 - [CLI Reference](docs/CLI_REFERENCE.md) - All commands and options
@@ -463,7 +470,7 @@ When request persistence is enabled (default), Agentainer automatically:
 agentainer requests agent-123
 
 # Requests are automatically replayed when you start the agent
-agentainer start agent-123
+agentainer start <agent-id>
 ```
 
 ### 🏥 Health Checks

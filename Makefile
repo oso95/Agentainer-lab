@@ -2,6 +2,15 @@ BINARY_NAME=agentainer
 DOCKER_IMAGE=agentainer:latest
 EXAMPLE_IMAGE=simple-agent:latest
 
+# OS detection
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    OS := linux
+endif
+ifeq ($(UNAME_S),Darwin)
+    OS := darwin
+endif
+
 # Colors for output
 RED := \033[0;31m
 GREEN := \033[0;32m
@@ -124,7 +133,11 @@ install-user: build
 	cp $(BINARY_NAME) $$HOME/bin/
 	@if [ ! -f $$HOME/.agentainer/config.yaml ]; then \
 		cp config.yaml $$HOME/.agentainer/; \
-		sed -i 's|data_dir: ./data|data_dir: ~/.agentainer/data|' $$HOME/.agentainer/config.yaml; \
+		if [ "$(OS)" = "darwin" ]; then \
+			sed -i '' 's|data_dir: ./data|data_dir: ~/.agentainer/data|' $$HOME/.agentainer/config.yaml; \
+		else \
+			sed -i 's|data_dir: ./data|data_dir: ~/.agentainer/data|' $$HOME/.agentainer/config.yaml; \
+		fi; \
 	fi
 	@# Add to PATH if not already there
 	@if ! echo $$PATH | grep -q "$$HOME/bin"; then \
@@ -140,7 +153,11 @@ install-user: build
 	@echo "$(GREEN)✓ Binary installed to $$HOME/bin/$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Installation complete! To start using Agentainer:$(NC)"
-	@echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"
+	@if [ "$(OS)" = "darwin" ]; then \
+		echo "1. Reload your shell: $(BLUE)source ~/.zshrc$(NC) (or ~/.bashrc if using bash)"; \
+	else \
+		echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"; \
+	fi
 	@echo "2. Start the server: $(BLUE)make run$(NC)"
 
 # Install prerequisites on fresh VM (requires sudo)
@@ -157,7 +174,11 @@ setup: install-prerequisites install-user
 	@echo "$(GREEN)================================================$(NC)"
 	@echo ""
 	@echo "$(YELLOW)To start using Agentainer:$(NC)"
-	@echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"
+	@if [ "$(OS)" = "darwin" ]; then \
+		echo "1. Reload your shell: $(BLUE)source ~/.zshrc$(NC) (or ~/.bashrc if using bash)"; \
+	else \
+		echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"; \
+	fi
 	@echo "2. Start the server: $(BLUE)make run$(NC)"
 	@echo ""
 	@echo "$(GREEN)Enjoy using Agentainer!$(NC)"

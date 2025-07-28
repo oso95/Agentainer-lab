@@ -72,8 +72,8 @@ agentainer start <agent-id>
 
 **Examples:**
 ```bash
-agentainer start agent-123
-agentainer start my-agent
+agentainer start agent-123...89
+agentainer start my-agent-387..94
 ```
 
 ### `agentainer stop`
@@ -107,7 +107,7 @@ agentainer restart <agent-id> [options]
 **Examples:**
 ```bash
 agentainer restart agent-123
-agentainer restart my-agent --timeout 5
+agentainer restart my-agent-2439 --timeout 5
 ```
 
 ### `agentainer pause`
@@ -137,7 +137,7 @@ agentainer resume <agent-id>
 agentainer resume agent-123
 
 # Resume after pause
-agentainer resume my-agent
+agentainer resume my-agent-3429
 
 # Resume after stop
 agentainer resume worker-1

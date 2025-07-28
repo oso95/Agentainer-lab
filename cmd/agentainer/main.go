@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	dockerclient "github.com/docker/docker/client"
 	"github.com/go-redis/redis/v8"
 	"github.com/spf13/cobra"
 	"github.com/agentainer/agentainer-lab/internal/agent"
@@ -370,15 +373,17 @@ func deployAgent(cmd *cobra.Command) {
 		log.Fatal("Either --config or both --name and --image are required")
 	}
 	
-	// Create Docker client
-	dockerClient, err := docker.NewClient(cfg.Docker.Host)
-	if err != nil {
-		log.Fatalf("Failed to create Docker client: %v", err)
-	}
-	
 	// Check if image is actually a Dockerfile
-	builder := docker.NewImageBuilder(dockerClient)
+	var dockerClient *dockerclient.Client
 	if docker.IsDockerfile(image) {
+		// Only create Docker client if we need to build an image
+		var err error
+		dockerClient, err = docker.NewClient(cfg.Docker.Host)
+		if err != nil {
+			log.Fatalf("Failed to create Docker client: %v", err)
+		}
+		
+		builder := docker.NewImageBuilder(dockerClient)
 		fmt.Printf("Detected Dockerfile: %s\n", image)
 		
 		// Generate unique image name
@@ -505,22 +510,6 @@ func deployAgent(cmd *cobra.Command) {
 		log.Fatalf("Failed to parse volume mappings: %v", err)
 	}
 
-	// Reuse dockerClient if already created for building
-	if dockerClient == nil {
-		dockerClient, err = docker.NewClient(cfg.Docker.Host)
-		if err != nil {
-			log.Fatalf("Failed to create Docker client: %v", err)
-		}
-	}
-
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-
-	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
-
 	// Create health check config
 	var healthCheck *agent.HealthCheckConfig
 	if healthEndpoint != "" {
@@ -532,96 +521,188 @@ func deployAgent(cmd *cobra.Command) {
 		}
 	}
 
-	agentObj, err := agentMgr.Deploy(context.Background(), name, image, envMap, cpuLimit, memoryLimit, autoRestart, token, ports, volumes, healthCheck)
+	// Create deployment request
+	deployReq := map[string]interface{}{
+		"name":         name,
+		"image":        image,
+		"env_vars":     envMap,
+		"cpu_limit":    cpuLimit,
+		"memory_limit": memoryLimit,
+		"auto_restart": autoRestart,
+		"token":        token,
+		"ports":        ports,
+		"volumes":      volumes,
+		"health_check": healthCheck,
+	}
+
+	// Deploy via API
+	apiResp, err := makeAPIRequest("POST", "/agents", deployReq)
 	if err != nil {
 		log.Fatalf("Failed to deploy agent: %v", err)
 	}
 
+	if !apiResp.Success {
+		log.Fatalf("Failed to deploy agent: %s", apiResp.Message)
+	}
+
+	// Extract agent info from response
+	agentData := apiResp.Data.(map[string]interface{})
+	
 	fmt.Printf("Agent deployed successfully!\n")
-	fmt.Printf("ID: %s\n", agentObj.ID)
-	fmt.Printf("Name: %s\n", agentObj.Name)
-	fmt.Printf("Image: %s\n", agentObj.Image)
-	fmt.Printf("Status: %s\n", agentObj.Status)
+	fmt.Printf("ID: %s\n", agentData["id"])
+	fmt.Printf("Name: %s\n", agentData["name"])
+	fmt.Printf("Image: %s\n", agentData["image"])
+	fmt.Printf("Status: %s\n", agentData["status"])
 	
 	// In the new architecture, all access is through the proxy
 	fmt.Printf("\nAccess:\n")
-	fmt.Printf("  Proxy: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
-	fmt.Printf("  API:   http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
-	if len(agentObj.Volumes) > 0 {
+	fmt.Printf("  Proxy: http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentData["id"])
+	fmt.Printf("  API:   http://localhost:%d/agents/%s\n", cfg.Server.Port, agentData["id"])
+	
+	// Display volume mappings if any
+	if volumesData, ok := agentData["volumes"].([]interface{}); ok && len(volumesData) > 0 {
 		fmt.Printf("Volume mappings:\n")
-		for _, volume := range agentObj.Volumes {
+		for _, vol := range volumesData {
+			volMap := vol.(map[string]interface{})
 			readOnlyStr := ""
-			if volume.ReadOnly {
+			if ro, ok := volMap["read_only"].(bool); ok && ro {
 				readOnlyStr = " (read-only)"
 			}
-			fmt.Printf("  %s:%s%s\n", volume.HostPath, volume.ContainerPath, readOnlyStr)
+			fmt.Printf("  %s:%s%s\n", volMap["host_path"], volMap["container_path"], readOnlyStr)
 		}
 	}
 }
 
-func startAgent(agentID string) {
-	agentMgr := createAgentManager()
+// Helper function to make API requests
+func makeAPIRequest(method, endpoint string, body interface{}) (*api.Response, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
 	
-	if err := agentMgr.Start(context.Background(), agentID); err != nil {
+	url := fmt.Sprintf("http://localhost:%d%s", cfg.Server.Port, endpoint)
+	
+	var bodyReader io.Reader
+	if body != nil {
+		jsonBody, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = bytes.NewReader(jsonBody)
+	}
+	
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w\nMake sure the server is running with 'agentainer server'", err)
+	}
+	defer resp.Body.Close()
+	
+	var apiResp api.Response
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	return &apiResp, nil
+}
+
+func startAgent(agentID string) {
+	apiResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/start", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to start agent: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to start agent: %s", apiResp.Message)
 	}
 	
 	fmt.Printf("Agent %s started successfully\n", agentID)
 }
 
 func stopAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
-	if err := agentMgr.Stop(context.Background(), agentID); err != nil {
+	apiResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/stop", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to stop agent: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to stop agent: %s", apiResp.Message)
 	}
 	
 	fmt.Printf("Agent %s stopped successfully\n", agentID)
 }
 
 func restartAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
-	if err := agentMgr.Restart(context.Background(), agentID); err != nil {
+	apiResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/restart", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to restart agent: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to restart agent: %s", apiResp.Message)
 	}
 	
 	fmt.Printf("Agent %s restarted successfully\n", agentID)
 }
 
 func pauseAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
-	if err := agentMgr.Pause(context.Background(), agentID); err != nil {
+	apiResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/pause", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to pause agent: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to pause agent: %s", apiResp.Message)
 	}
 	
 	fmt.Printf("Agent %s paused successfully\n", agentID)
 }
 
 func resumeAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
-	if err := agentMgr.Resume(context.Background(), agentID); err != nil {
+	apiResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/resume", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to resume agent: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to resume agent: %s", apiResp.Message)
 	}
 	
 	fmt.Printf("Agent %s resumed successfully\n", agentID)
 }
 
 func removeAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
 	// Get agent info before removal for confirmation
-	agent, err := agentMgr.GetAgent(agentID)
+	getResp, err := makeAPIRequest("GET", fmt.Sprintf("/agents/%s", agentID), nil)
 	if err != nil {
 		log.Fatalf("Failed to find agent: %v", err)
 	}
 	
-	fmt.Printf("Removing agent '%s' (ID: %s, Status: %s)\n", agent.Name, agentID, agent.Status)
+	if !getResp.Success {
+		log.Fatalf("Failed to find agent: %s", getResp.Message)
+	}
 	
-	if err := agentMgr.Remove(context.Background(), agentID); err != nil {
+	// Extract agent info
+	agentData := getResp.Data.(map[string]interface{})
+	name := agentData["name"].(string)
+	status := agentData["status"].(string)
+	
+	fmt.Printf("Removing agent '%s' (ID: %s, Status: %s)\n", name, agentID, status)
+	
+	// Remove the agent
+	removeResp, err := makeAPIRequest("DELETE", fmt.Sprintf("/agents/%s", agentID), nil)
+	if err != nil {
 		log.Fatalf("Failed to remove agent: %v", err)
+	}
+	
+	if !removeResp.Success {
+		log.Fatalf("Failed to remove agent: %s", removeResp.Message)
 	}
 	
 	fmt.Printf("Agent %s removed successfully\n", agentID)
@@ -630,34 +711,70 @@ func removeAgent(agentID string) {
 func viewLogs(cmd *cobra.Command, agentID string) {
 	follow, _ := cmd.Flags().GetBool("follow")
 	
-	agentMgr := createAgentManager()
+	// Create HTTP client with longer timeout for streaming logs
+	client := &http.Client{Timeout: 5 * time.Minute}
 	
-	logs, err := agentMgr.GetLogs(context.Background(), agentID, follow)
-	if err != nil {
-		log.Fatalf("Failed to get logs: %v", err)
+	// Build URL with query parameter
+	url := fmt.Sprintf("http://localhost:%d/agents/%s/logs", cfg.Server.Port, agentID)
+	if follow {
+		url += "?follow=true"
 	}
-	defer logs.Close()
-
+	
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
+	
+	// Add auth header
+	req.Header.Set("Authorization", "Bearer "+cfg.Security.DefaultToken)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Failed to connect to server: %v\nMake sure the server is running with 'agentainer server'", err)
+	}
+	defer resp.Body.Close()
+	
+	// Check for error status
+	if resp.StatusCode != http.StatusOK {
+		var apiResp api.Response
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err == nil {
+			log.Fatalf("Failed to get logs: %s", apiResp.Message)
+		} else {
+			log.Fatalf("Failed to get logs: HTTP %d", resp.StatusCode)
+		}
+	}
+	
+	// Stream the logs
 	buf := make([]byte, 1024)
 	for {
-		n, err := logs.Read(buf)
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			fmt.Print(string(buf[:n]))
+		}
 		if err != nil {
-			if err.Error() != "EOF" {
+			if err != io.EOF {
 				log.Printf("Error reading logs: %v", err)
 			}
 			break
 		}
-		fmt.Print(string(buf[:n]))
 	}
 }
 
 func listAgents() {
-	agentMgr := createAgentManager()
-	
-	// CLI lists all agents regardless of token
-	agents, err := agentMgr.ListAgents("")
+	apiResp, err := makeAPIRequest("GET", "/agents", nil)
 	if err != nil {
 		log.Fatalf("Failed to list agents: %v", err)
+	}
+	
+	if !apiResp.Success {
+		log.Fatalf("Failed to list agents: %s", apiResp.Message)
+	}
+	
+	// Convert response data to agents
+	agents, ok := apiResp.Data.([]interface{})
+	if !ok {
+		fmt.Println("No agents found")
+		return
 	}
 
 	if len(agents) == 0 {
@@ -668,44 +785,52 @@ func listAgents() {
 	fmt.Printf("%-20s %-20s %-30s %-10s\n", "ID", "NAME", "IMAGE", "STATUS")
 	fmt.Println(strings.Repeat("-", 80))
 	
-	for _, agentObj := range agents {
-		fmt.Printf("%-20s %-20s %-30s %-10s\n", agentObj.ID, agentObj.Name, agentObj.Image, agentObj.Status)
-		if agentObj.Status == agent.StatusRunning {
-			fmt.Printf("  → Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, agentObj.ID)
-			fmt.Printf("  → API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, agentObj.ID)
+	for _, agentData := range agents {
+		agent := agentData.(map[string]interface{})
+		id := agent["id"].(string)
+		name := agent["name"].(string)
+		image := agent["image"].(string)
+		status := agent["status"].(string)
+		
+		fmt.Printf("%-20s %-20s %-30s %-10s\n", id, name, image, status)
+		if status == "running" {
+			fmt.Printf("  → Proxy:  http://localhost:%d/agent/%s/\n", cfg.Server.Port, id)
+			fmt.Printf("  → API:    http://localhost:%d/agents/%s\n", cfg.Server.Port, id)
 		}
 	}
 }
 
 func invokeAgent(agentID string) {
-	agentMgr := createAgentManager()
-	
-	agentObj, err := agentMgr.GetAgent(agentID)
+	// First check if agent exists and is running
+	getResp, err := makeAPIRequest("GET", fmt.Sprintf("/agents/%s", agentID), nil)
 	if err != nil {
 		log.Fatalf("Failed to get agent: %v", err)
 	}
-
-	if agentObj.Status != agent.StatusRunning {
-		log.Fatalf("Agent is not running (status: %s)", agentObj.Status)
+	
+	if !getResp.Success {
+		log.Fatalf("Failed to get agent: %s", getResp.Message)
+	}
+	
+	agentData := getResp.Data.(map[string]interface{})
+	status := agentData["status"].(string)
+	
+	if status != "running" {
+		log.Fatalf("Agent is not running (status: %s)", status)
+	}
+	
+	// Invoke the agent
+	invokeResp, err := makeAPIRequest("POST", fmt.Sprintf("/agents/%s/invoke", agentID), nil)
+	if err != nil {
+		log.Fatalf("Failed to invoke agent: %v", err)
+	}
+	
+	if !invokeResp.Success {
+		log.Fatalf("Failed to invoke agent: %s", invokeResp.Message)
 	}
 
 	fmt.Printf("Agent %s invoked successfully\n", agentID)
 }
 
-func createAgentManager() *agent.Manager {
-	dockerClient, err := docker.NewClient(cfg.Docker.Host)
-	if err != nil {
-		log.Fatalf("Failed to create Docker client: %v", err)
-	}
-
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-
-	return agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
-}
 
 var healthCmd = &cobra.Command{
 	Use:   "health [agent-id]",
@@ -893,20 +1018,6 @@ func deployFromYAML(configFile string) {
 	}
 	fmt.Println(strings.Repeat("-", 80))
 
-	// Create managers
-	dockerClient, err := docker.NewClient(cfg.Docker.Host)
-	if err != nil {
-		log.Fatalf("Failed to create Docker client: %v", err)
-	}
-
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-
-	agentMgr := agent.NewManager(dockerClient, redisClient, cfg.GetAgentConfigPath())
-
 	// Track deployed agents
 	deployedAgents := []struct {
 		ID    string
@@ -936,36 +1047,46 @@ func deployFromYAML(configFile string) {
 			// Empty port mappings (not supported in new architecture)
 			var portMappings []agent.PortMapping
 
-			// Deploy the agent
-			agentObj, err := agentMgr.Deploy(
-				context.Background(),
-				agentConfig.Name,
-				agentConfig.Image,
-				agentConfig.EnvVars,
-				agentConfig.CPULimit,
-				agentConfig.MemoryLimit,
-				agentConfig.AutoRestart,
-				token,
-				portMappings,
-				agentConfig.Volumes,
-				agentConfig.HealthCheck,
-			)
+			// Create deployment request
+			deployReq := map[string]interface{}{
+				"name":         agentConfig.Name,
+				"image":        agentConfig.Image,
+				"env_vars":     agentConfig.EnvVars,
+				"cpu_limit":    agentConfig.CPULimit,
+				"memory_limit": agentConfig.MemoryLimit,
+				"auto_restart": agentConfig.AutoRestart,
+				"token":        token,
+				"ports":        portMappings,
+				"volumes":      agentConfig.Volumes,
+				"health_check": agentConfig.HealthCheck,
+			}
+
+			// Deploy via API
+			apiResp, err := makeAPIRequest("POST", "/agents", deployReq)
 			if err != nil {
 				log.Printf("Failed to deploy %s: %v", agentConfig.Name, err)
 				continue
 			}
+
+			if !apiResp.Success {
+				log.Printf("Failed to deploy %s: %s", agentConfig.Name, apiResp.Message)
+				continue
+			}
+
+			// Extract agent info from response
+			agentData := apiResp.Data.(map[string]interface{})
 
 			deployedAgents = append(deployedAgents, struct {
 				ID    string
 				Name  string
 				Image string
 			}{
-				ID:    agentObj.ID,
-				Name:  agentObj.Name,
-				Image: agentObj.Image,
+				ID:    agentData["id"].(string),
+				Name:  agentData["name"].(string),
+				Image: agentData["image"].(string),
 			})
 
-			fmt.Printf("  ✓ %s (ID: %s)\n", agentObj.Name, agentObj.ID)
+			fmt.Printf("  ✓ %s (ID: %s)\n", agentData["name"], agentData["id"])
 		}
 	}
 
