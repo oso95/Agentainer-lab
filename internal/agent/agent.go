@@ -493,6 +493,7 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 	if agent.AutoRestart {
 		hostConfig.RestartPolicy.Name = "always"
 	}
+	
 
 	resp, err := m.dockerClient.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {

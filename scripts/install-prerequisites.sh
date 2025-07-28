@@ -164,14 +164,24 @@ else
     echo -e "${GREEN}✓ Docker Compose is already installed${NC}"
 fi
 
-# Start Docker service (Linux only)
+# Start Docker service (Linux only, skip for WSL)
 if [[ "$OS" == "linux" ]]; then
-    if ! sudo systemctl is-active --quiet docker; then
-        echo -e "${YELLOW}Starting Docker service...${NC}"
-        sudo systemctl start docker
-        sudo systemctl enable docker
+    # Check if we're in WSL
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo -e "${GREEN}✓ Running in WSL - Docker Desktop manages the Docker daemon${NC}"
     else
-        echo -e "${GREEN}✓ Docker service is running${NC}"
+        # Check if docker service exists
+        if systemctl list-unit-files | grep -q "docker.service"; then
+            if ! sudo systemctl is-active --quiet docker; then
+                echo -e "${YELLOW}Starting Docker service...${NC}"
+                sudo systemctl start docker
+                sudo systemctl enable docker
+            else
+                echo -e "${GREEN}✓ Docker service is running${NC}"
+            fi
+        else
+            echo -e "${GREEN}✓ Docker is running (managed externally)${NC}"
+        fi
     fi
 fi
 

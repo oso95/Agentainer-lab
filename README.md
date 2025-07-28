@@ -135,15 +135,20 @@ make setup
 # Update your PATH
 source ~/.bashrc
 
-# Start Redis (choose one):
-# Option A: Using Docker
+# Start Agentainer server (containerized for proper networking)
+./scripts/start-server.sh
+
+# Or manually:
+docker network create agentainer-network
 docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
-
-# Option B: Using system Redis
-# sudo systemctl start redis
-
-# Start Agentainer server
-agentainer server
+docker build -t agentainer:latest .
+docker run -d --name agentainer-server \
+  --network agentainer-network \
+  -p 8081:8081 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e AGENTAINER_REDIS_HOST=host.docker.internal \
+  --add-host host.docker.internal:host-gateway \
+  agentainer:latest
 ```
 
 </details>
@@ -162,15 +167,20 @@ make install-user
 # Update your PATH
 source ~/.bashrc
 
-# Start Redis (choose one):
-# Option A: Using Docker
+# Start Agentainer server (containerized for proper networking)
+./scripts/start-server.sh
+
+# Or manually:
+docker network create agentainer-network
 docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
-
-# Option B: Using system Redis
-# sudo systemctl start redis
-
-# Start Agentainer server
-agentainer server
+docker build -t agentainer:latest .
+docker run -d --name agentainer-server \
+  --network agentainer-network \
+  -p 8081:8081 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e AGENTAINER_REDIS_HOST=host.docker.internal \
+  --add-host host.docker.internal:host-gateway \
+  agentainer:latest
 ```
 
 </details>
@@ -198,10 +208,10 @@ agentainer deploy --config examples/deployments/basic-agents.yaml
 # Start the agent
 agentainer start <agent-id>
 
-# Access your agent through the proxy:
+# Access your agent through the proxy (no auth needed):
 curl http://localhost:8081/agent/<agent-id>/
 
-# Check agent status via API:
+# Check agent status via API (auth required):
 curl http://localhost:8081/agents/<agent-id> \
   -H "Authorization: Bearer agentainer-default-token"
 ```
@@ -555,30 +565,97 @@ agentainer audit --limit 1000 > audit-export.log
 
 ## 🔌 API Reference
 
+### Understanding Proxy vs API Endpoints
+
+Agentainer provides two distinct types of endpoints for different purposes:
+
+#### 🔧 API Endpoints (`/agents/*`) - Management Operations
+- **Purpose**: Control and manage agent lifecycle
+- **Authentication**: Required (Bearer token)
+- **Use when you want to**:
+  - Deploy, start, stop, or remove agents
+  - View agent status and configuration
+  - Monitor logs and metrics
+  - Manage agent resources
+
+**Example**: Managing an agent
+```bash
+# Deploy a new agent
+curl -X POST http://localhost:8081/agents \
+  -H "Authorization: Bearer your-token" \
+  -d '{"name": "my-agent", "image": "my-agent:latest"}'
+
+# Check agent status
+curl http://localhost:8081/agents/agent-123 \
+  -H "Authorization: Bearer your-token"
+```
+
+#### 🌐 Proxy Endpoint (`/agent/*`) - Direct Agent Access
+- **Purpose**: Communicate directly with your agent's application
+- **Authentication**: Not required (public access)
+- **Use when you want to**:
+  - Call any HTTP endpoint your agent exposes
+  - Send requests to your agent's application
+  - Integrate your agent with external services
+  - Test your agent's API endpoints
+
+**Example**: Accessing your agent's application
+```bash
+# If your agent exposes a root endpoint
+curl http://localhost:8081/agent/agent-123/
+
+# If your agent has an API endpoint
+curl -X POST http://localhost:8081/agent/agent-123/api/chat \
+  -d '{"message": "Hello, agent!"}'
+
+# Access any path your agent exposes
+curl http://localhost:8081/agent/agent-123/health
+```
+
+#### 🤔 Which Should You Use?
+
+| Task | Use | Example |
+|------|-----|---------|
+| Deploy a new agent | API | `POST /agents` |
+| Stop a running agent | API | `POST /agents/{id}/stop` |
+| Check if agent exists | API | `GET /agents/{id}` |
+| Call your agent's REST API | Proxy | `POST /agent/{id}/api/endpoint` |
+| Access your agent's endpoints | Proxy | `GET /agent/{id}/` |
+| Send data to your agent | Proxy | `POST /agent/{id}/process` |
+
+**Quick tip**: Remember "agents" (plural) = API, "agent" (singular) = Proxy
+
+See [API Endpoints Documentation](docs/API_ENDPOINTS.md) for complete reference.
+
 <details>
 <summary><b>REST Endpoints</b></summary>
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| POST | `/agents` | Deploy new agent |
-| GET | `/agents` | List all agents |
-| GET | `/agents/{id}` | Get agent details |
-| POST | `/agents/{id}/start` | Start agent |
-| POST | `/agents/{id}/stop` | Stop agent |
-| POST | `/agents/{id}/restart` | Restart running agent |
-| POST | `/agents/{id}/pause` | Pause agent |
-| POST | `/agents/{id}/resume` | Resume agent |
-| DELETE | `/agents/{id}` | Remove agent |
-| GET | `/agents/{id}/logs` | Get agent logs |
-| GET | `/agents/{id}/metrics` | Get current agent metrics |
-| GET | `/agents/{id}/metrics/history` | Get agent metrics history |
-| GET | `/agents/{id}/requests` | Get pending requests |
-| GET | `/agents/{id}/requests/{reqId}` | Get specific request |
-| POST | `/agents/{id}/requests/{reqId}/replay` | Manually replay request |
-| GET | `/agents/{id}/health` | Get agent health status |
-| GET | `/health/agents` | Get all agents health status |
-| ANY | `/agent/{id}/*` | Proxy to agent |
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| **Server Endpoints** | | | |
+| GET | `/health` | Agentainer server health check | No |
+| **API Endpoints** | | | |
+| POST | `/agents` | Deploy new agent | Yes |
+| GET | `/agents` | List all agents | Yes |
+| GET | `/agents/{id}` | Get agent details | Yes |
+| POST | `/agents/{id}/start` | Start agent | Yes |
+| POST | `/agents/{id}/stop` | Stop agent | Yes |
+| POST | `/agents/{id}/restart` | Restart running agent | Yes |
+| POST | `/agents/{id}/pause` | Pause agent | Yes |
+| POST | `/agents/{id}/resume` | Resume agent | Yes |
+| DELETE | `/agents/{id}` | Remove agent | Yes |
+| GET | `/agents/{id}/logs` | Get agent logs | Yes |
+| GET | `/agents/{id}/metrics` | Get current agent metrics | Yes |
+| GET | `/agents/{id}/metrics/history` | Get agent metrics history | Yes |
+| GET | `/agents/{id}/requests` | Get pending requests | Yes |
+| GET | `/agents/{id}/requests/{reqId}` | Get specific request | Yes |
+| POST | `/agents/{id}/requests/{reqId}/replay` | Manually replay request | Yes |
+| GET | `/agents/{id}/health` | Get agent health monitoring status | Yes |
+| GET | `/health/agents` | Get all agents health status | Yes |
+| **Proxy Endpoints** | | | |
+| ANY | `/agent/{id}/*` | Direct proxy to any agent endpoint | No |
+| GET | `/agent/{id}/health` | Example: Access agent's health endpoint | No |
+| POST | `/agent/{id}/api/*` | Example: Access agent's API endpoints | No |
 
 </details>
 
@@ -643,6 +720,52 @@ agentainer deploy \
   --env OPENAI_API_KEY=$OPENAI_API_KEY \
   --volume ./llm-data:/app/state
 ```
+
+### Real-World Example: API vs Proxy Usage
+
+Here's a practical example deploying and using a chatbot agent:
+
+```bash
+# 1. Deploy the chatbot agent using the API
+curl -X POST http://localhost:8081/agents \
+  -H "Authorization: Bearer agentainer-default-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "chatbot",
+    "image": "examples/llm-agent/Dockerfile",
+    "env_vars": {"OPENAI_API_KEY": "your-key"}
+  }'
+
+# 2. Start the agent using the API
+curl -X POST http://localhost:8081/agents/agent-123/start \
+  -H "Authorization: Bearer agentainer-default-token"
+
+# 3. Check agent status using the API
+curl http://localhost:8081/agents/agent-123 \
+  -H "Authorization: Bearer agentainer-default-token"
+# Returns: {"name": "chatbot", "status": "running", ...}
+
+# 4. Now interact with your chatbot using the PROXY (no auth!)
+curl -X POST http://localhost:8081/agent/agent-123/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, how are you?"}'
+# Returns: {"response": "I'm doing well, thank you! How can I help you today?"}
+
+# 5. Access the agent's health endpoint using the PROXY
+curl http://localhost:8081/agent/agent-123/health
+
+# 6. Monitor agent logs using the API
+curl http://localhost:8081/agents/agent-123/logs \
+  -H "Authorization: Bearer agentainer-default-token"
+
+# 7. When done, stop the agent using the API
+curl -X POST http://localhost:8081/agents/agent-123/stop \
+  -H "Authorization: Bearer agentainer-default-token"
+```
+
+**Key Takeaway**: 
+- Use **API** (`/agents/*`) for management tasks (requires auth)
+- Use **Proxy** (`/agent/*`) to interact with your agent's actual application (no auth)
 
 ### Building Resilient Agents
 
@@ -855,15 +978,41 @@ make test
 make test-all
 ```
 
-### Note on Docker Compose
+### Deployment Options
 
-The `docker-compose.yml` file is provided for development purposes only. **We do not recommend using docker-compose for running Agentainer** because:
+#### Option 1: Containerized Server (Recommended for Development)
+Run Agentainer server as a container to ensure proper network connectivity:
 
-1. It creates a separate Redis instance that doesn't share state with your local CLI
-2. It adds unnecessary complexity for a tool designed to be simple
-3. The CLI and API would use different data stores, causing confusion
+```bash
+# Use the provided script
+./scripts/start-server.sh
 
-For production use, run Agentainer directly on your host with a local or containerized Redis instance.
+# Or manually:
+docker network create agentainer-network
+docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
+docker build -t agentainer:latest .
+docker run -d --name agentainer-server \
+  --network agentainer-network \
+  -p 8081:8081 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e AGENTAINER_REDIS_HOST=host.docker.internal \
+  --add-host host.docker.internal:host-gateway \
+  agentainer:latest
+```
+
+This setup:
+- Allows server to reach agent containers by hostname
+- CLI commands work normally
+- Agents can still communicate with each other
+
+#### Option 2: Docker Compose
+For a fully containerized setup:
+
+```bash
+docker-compose up -d
+```
+
+This will start both Redis (on port 6379) and Agentainer server (on port 8081). You can use both CLI commands and the API!
 
 ### Available Make Commands
 

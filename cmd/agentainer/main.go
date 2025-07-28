@@ -99,9 +99,8 @@ Examples:
   agentainer deploy --config ./deployments/production.yaml
 
 Agent Access:
-  All agents are accessed through the secure proxy:
-  • Proxy: http://localhost:8081/agent/<agent-id>/
-  • API:   http://localhost:8081/agents/<agent-id>
+  • Proxy: http://localhost:8081/agent/<agent-id>/   (no auth, direct agent access)
+  • API:   http://localhost:8081/agents/<agent-id>   (requires auth, management operations)
   
 Resource Limits:
   • CPU:    0.5, 1, 2 (cores) or 500m (millicores)

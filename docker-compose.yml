@@ -1,7 +1,5 @@
-# WARNING: This docker-compose file is for DEVELOPMENT ONLY
-# Do not use this for running Agentainer in production as it creates
-# a separate Redis instance that doesn't share state with the CLI.
-# See README.md for recommended installation methods.
+# Agentainer Docker Compose
+# Simple setup for running Agentainer with Docker Compose
 
 version: '3.8'
 
