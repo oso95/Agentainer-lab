@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,8 +14,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-redis/redis/v8"
+	"github.com/agentainer/agentainer-lab/pkg/agentsync"
 )
 
 type Status string
@@ -27,6 +26,9 @@ const (
 	StatusStopped Status = "stopped"
 	StatusPaused  Status = "paused"
 	StatusFailed  Status = "failed"
+	
+	// Network configuration
+	AgentainerNetworkName = "agentainer-network"
 )
 
 func (s Status) MarshalBinary() ([]byte, error) {
@@ -51,6 +53,7 @@ type Agent struct {
 	Token        string            `json:"token"`
 	Ports        []PortMapping     `json:"ports"`
 	Volumes      []VolumeMapping   `json:"volumes"`
+	HealthCheck  *HealthCheckConfig `json:"health_check,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
@@ -67,37 +70,52 @@ type VolumeMapping struct {
 	ReadOnly      bool   `json:"read_only"`
 }
 
+type HealthCheckConfig struct {
+	Endpoint string `json:"endpoint"`
+	Interval string `json:"interval"`
+	Timeout  string `json:"timeout,omitempty"`
+	Retries  int    `json:"retries,omitempty"`
+}
+
 type Manager struct {
 	dockerClient *client.Client
 	redisClient  *redis.Client
 	configPath   string
+	quickSync    *agentsync.QuickSync
 }
 
 func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPath string) *Manager {
-	return &Manager{
+	m := &Manager{
 		dockerClient: dockerClient,
 		redisClient:  redisClient,
 		configPath:   configPath,
+		quickSync:    agentsync.NewQuickSync(dockerClient, redisClient),
 	}
+	
+	// Ensure the internal network exists
+	ctx := context.Background()
+	if err := m.ensureNetworkExists(ctx); err != nil {
+		log.Printf("Warning: Failed to create network: %v", err)
+	}
+	
+	return m
 }
 
-func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping) (*Agent, error) {
+func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping, healthCheck *HealthCheckConfig) (*Agent, error) {
+	// Validate that the Docker image exists
+	_, _, err := m.dockerClient.ImageInspectWithRaw(ctx, image)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return nil, fmt.Errorf("docker image '%s' not found. Please build or pull the image first", image)
+		}
+		return nil, fmt.Errorf("failed to inspect docker image: %w", err)
+	}
+	
 	id := generateID()
 	
-	// If no ports specified, auto-assign a port for the default agent port (8000)
-	if len(ports) == 0 {
-		autoPort, err := m.findAvailablePort()
-		if err != nil {
-			return nil, fmt.Errorf("failed to find available port: %w", err)
-		}
-		ports = []PortMapping{
-			{
-				HostPort:      autoPort,
-				ContainerPort: 8000, // Default agent port
-				Protocol:      "tcp",
-			},
-		}
-	}
+	// In the new architecture, we don't expose ports directly
+	// All access is through the proxy
+	// ports parameter is kept for backward compatibility but ignored
 	
 	agent := &Agent{
 		ID:          id,
@@ -109,18 +127,15 @@ func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[st
 		MemoryLimit: memoryLimit,
 		AutoRestart: autoRestart,
 		Token:       token,
-		Ports:       ports,
+		Ports:       []PortMapping{}, // No longer exposing ports
 		Volumes:     volumes,
+		HealthCheck: healthCheck,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
 
 	if err := m.saveAgent(agent); err != nil {
 		return nil, fmt.Errorf("failed to save agent: %w", err)
-	}
-
-	if err := m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", id), agent.Status, 0).Err(); err != nil {
-		return nil, fmt.Errorf("failed to cache agent status: %w", err)
 	}
 
 	return agent, nil
@@ -154,8 +169,15 @@ func (m *Manager) Start(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after start: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Stop(ctx context.Context, agentID string) error {
@@ -181,8 +203,15 @@ func (m *Manager) Stop(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after stop: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Restart(ctx context.Context, agentID string) error {
@@ -212,8 +241,15 @@ func (m *Manager) Pause(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after pause: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Resume(ctx context.Context, agentID string) error {
@@ -263,8 +299,15 @@ func (m *Manager) Resume(ctx context.Context, agentID string) error {
 	if err := m.saveAgent(agent); err != nil {
 		return fmt.Errorf("failed to save agent: %w", err)
 	}
+	
+	// Trigger immediate sync to ensure consistency
+	go func() {
+		if err := m.quickSync.SyncAgent(context.Background(), agentID); err != nil {
+			log.Printf("Failed to quick sync agent %s after resume: %v", agentID, err)
+		}
+	}()
 
-	return m.redisClient.Set(ctx, fmt.Sprintf("agent:%s", agentID), agent.Status, 0).Err()
+	return nil
 }
 
 func (m *Manager) Remove(ctx context.Context, agentID string) error {
@@ -302,27 +345,67 @@ func (m *Manager) Remove(ctx context.Context, agentID string) error {
 		// Log but don't fail if Redis deletion fails
 		log.Printf("Warning: failed to remove agent from cache: %v", err)
 	}
+	
+	// Clean up any request queues for this agent
+	requestKeys := []string{
+		fmt.Sprintf("agent:%s:requests:pending", agentID),
+		fmt.Sprintf("agent:%s:requests:completed", agentID),
+		fmt.Sprintf("agent:%s:requests:failed", agentID),
+	}
+	for _, key := range requestKeys {
+		if err := m.redisClient.Del(ctx, key).Err(); err != nil {
+			log.Printf("Warning: failed to remove request queue %s: %v", key, err)
+		}
+	}
+	
+	// Also clean up any individual request data
+	iter := m.redisClient.Scan(ctx, 0, fmt.Sprintf("request:%s:*", agentID), 0).Iterator()
+	for iter.Next(ctx) {
+		if err := m.redisClient.Del(ctx, iter.Val()).Err(); err != nil {
+			log.Printf("Warning: failed to remove request %s: %v", iter.Val(), err)
+		}
+	}
 
 	return nil
 }
 
 func (m *Manager) GetAgent(agentID string) (*Agent, error) {
-	agents, err := m.loadAgents()
+	ctx := context.Background()
+	
+	// Get agent from Redis
+	key := fmt.Sprintf("agent:%s", agentID)
+	data, err := m.redisClient.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil, fmt.Errorf("agent not found")
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get agent: %w", err)
+	}
+	
+	var agent Agent
+	if err := json.Unmarshal([]byte(data), &agent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal agent: %w", err)
+	}
+	
+	return &agent, nil
+}
+
+func (m *Manager) ListAgents(token string) ([]Agent, error) {
+	// Quick sync all agents before listing to ensure fresh data
+	ctx := context.Background()
+	if err := m.quickSync.SyncAll(ctx); err != nil {
+		// Log but don't fail - still return what we have
+		log.Printf("Warning: Failed to sync before list: %v", err)
+	}
+	
+	allAgents, err := m.loadAgents()
 	if err != nil {
 		return nil, err
 	}
-
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			return &agent, nil
-		}
-	}
-
-	return nil, fmt.Errorf("agent not found")
-}
-
-func (m *Manager) ListAgents() ([]Agent, error) {
-	return m.loadAgents()
+	
+	// Always return all agents - filtering by token is deprecated
+	// in the network-isolated architecture where tokens are only
+	// used for API authentication, not agent ownership
+	return allAgents, nil
 }
 
 func (m *Manager) GetLogs(ctx context.Context, agentID string, follow bool) (io.ReadCloser, error) {
@@ -351,25 +434,8 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Create exposed ports and port bindings
-	exposedPorts := make(nat.PortSet)
-	portBindings := make(nat.PortMap)
-
-	for _, port := range agent.Ports {
-		containerPort, err := nat.NewPort(port.Protocol, fmt.Sprintf("%d", port.ContainerPort))
-		if err != nil {
-			return "", fmt.Errorf("invalid container port: %w", err)
-		}
-		
-		exposedPorts[containerPort] = struct{}{}
-		
-		portBindings[containerPort] = []nat.PortBinding{
-			{
-				HostIP:   "0.0.0.0",
-				HostPort: fmt.Sprintf("%d", port.HostPort),
-			},
-		}
-	}
+	// No port bindings in the new architecture
+	// Containers are accessed through the proxy only
 
 	// Create volume mounts
 	var mounts []mount.Mount
@@ -405,11 +471,11 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 	config := &container.Config{
 		Image:        agent.Image,
 		Env:          env,
-		ExposedPorts: exposedPorts,
 		Labels: map[string]string{
 			"agentainer.id":   agent.ID,
 			"agentainer.name": agent.Name,
 		},
+		Hostname: agent.ID, // Use agent ID as hostname for easy identification
 	}
 
 	hostConfig := &container.HostConfig{
@@ -420,13 +486,14 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 			Memory:   agent.MemoryLimit,
 			NanoCPUs: agent.CPULimit,
 		},
-		PortBindings: portBindings,
 		Mounts:       mounts,
+		NetworkMode: container.NetworkMode(AgentainerNetworkName),
 	}
 
 	if agent.AutoRestart {
 		hostConfig.RestartPolicy.Name = "always"
 	}
+	
 
 	resp, err := m.dockerClient.ContainerCreate(ctx, config, hostConfig, nil, nil, "")
 	if err != nil {
@@ -441,77 +508,86 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 }
 
 func (m *Manager) saveAgent(agent *Agent) error {
-	agents, err := m.loadAgents()
+	ctx := context.Background()
+	
+	// Save agent to Redis as primary storage
+	data, err := json.Marshal(agent)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal agent: %w", err)
 	}
-
-	found := false
-	for i, a := range agents {
-		if a.ID == agent.ID {
-			agents[i] = *agent
-			found = true
-			break
-		}
+	
+	key := fmt.Sprintf("agent:%s", agent.ID)
+	if err := m.redisClient.Set(ctx, key, data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to save agent to Redis: %w", err)
 	}
-
-	if !found {
-		agents = append(agents, *agent)
+	
+	// Also save to agents list for efficient listing
+	if err := m.redisClient.SAdd(ctx, "agents:list", agent.ID).Err(); err != nil {
+		return fmt.Errorf("failed to add agent to list: %w", err)
 	}
-
-	data, err := json.MarshalIndent(agents, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(m.configPath, data, 0644)
+	
+	return nil
 }
 
 func (m *Manager) removeAgentFromStorage(agentID string) error {
-	agents, err := m.loadAgents()
+	// Remove agent from Redis storage
+	ctx := context.Background()
+	key := fmt.Sprintf("agent:%s", agentID)
+	
+	// Check if agent exists first
+	exists, err := m.redisClient.Exists(ctx, key).Result()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check agent existence: %w", err)
 	}
-
-	// Filter out the agent to remove
-	var filteredAgents []Agent
-	found := false
-	for _, agent := range agents {
-		if agent.ID != agentID {
-			filteredAgents = append(filteredAgents, agent)
-		} else {
-			found = true
-		}
-	}
-
-	if !found {
+	if exists == 0 {
 		return fmt.Errorf("agent not found in storage")
 	}
-
-	// Save the filtered list
-	data, err := json.MarshalIndent(filteredAgents, "", "  ")
-	if err != nil {
-		return err
+	
+	// Delete the agent
+	if err := m.redisClient.Del(ctx, key).Err(); err != nil {
+		return fmt.Errorf("failed to delete agent from Redis: %w", err)
 	}
-
-	return os.WriteFile(m.configPath, data, 0644)
+	
+	// Remove from agents list
+	if err := m.redisClient.SRem(ctx, "agents:list", agentID).Err(); err != nil {
+		return fmt.Errorf("failed to remove agent from list: %w", err)
+	}
+	
+	return nil
 }
 
 func (m *Manager) loadAgents() ([]Agent, error) {
-	if _, err := os.Stat(m.configPath); os.IsNotExist(err) {
-		return []Agent{}, nil
-	}
-
-	data, err := os.ReadFile(m.configPath)
+	ctx := context.Background()
+	
+	// Get all agent IDs from Redis set
+	agentIDs, err := m.redisClient.SMembers(ctx, "agents:list").Result()
 	if err != nil {
-		return nil, err
+		log.Printf("ERROR: Failed to get agent list from Redis: %v", err)
+		return nil, fmt.Errorf("failed to get agent list: %w", err)
 	}
-
-	var agents []Agent
-	if err := json.Unmarshal(data, &agents); err != nil {
-		return nil, err
+	
+	log.Printf("DEBUG: Found %d agent IDs in Redis: %v", len(agentIDs), agentIDs)
+	
+	agents := make([]Agent, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		key := fmt.Sprintf("agent:%s", id)
+		data, err := m.redisClient.Get(ctx, key).Result()
+		if err == redis.Nil {
+			// Agent in list but not found, clean up
+			m.redisClient.SRem(ctx, "agents:list", id)
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("failed to get agent %s: %w", id, err)
+		}
+		
+		var agent Agent
+		if err := json.Unmarshal([]byte(data), &agent); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal agent %s: %w", id, err)
+		}
+		
+		agents = append(agents, agent)
 	}
-
+	
 	return agents, nil
 }
 
@@ -519,35 +595,34 @@ func generateID() string {
 	return fmt.Sprintf("agent-%d", time.Now().UnixNano())
 }
 
-func (m *Manager) findAvailablePort() (int, error) {
-	// Get all existing agents to check their ports
-	agents, err := m.loadAgents()
+func (m *Manager) ensureNetworkExists(ctx context.Context) error {
+	// Check if network already exists
+	networks, err := m.dockerClient.NetworkList(ctx, types.NetworkListOptions{})
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("failed to list networks: %w", err)
 	}
 	
-	usedPorts := make(map[int]bool)
-	for _, agent := range agents {
-		for _, port := range agent.Ports {
-			usedPorts[port.HostPort] = true
+	for _, net := range networks {
+		if net.Name == AgentainerNetworkName {
+			return nil // Network already exists
 		}
 	}
 	
-	// Start looking from port 9000 to avoid conflicts with common services
-	for port := 9000; port < 10000; port++ {
-		if !usedPorts[port] && isPortAvailable(port) {
-			return port, nil
-		}
+	// Create the network
+	_, err = m.dockerClient.NetworkCreate(ctx, AgentainerNetworkName, types.NetworkCreate{
+		Driver: "bridge",
+		Options: map[string]string{
+			"com.docker.network.bridge.name": "agentainer0",
+		},
+		Labels: map[string]string{
+			"managed-by": "agentainer",
+		},
+	})
+	
+	if err != nil {
+		return fmt.Errorf("failed to create network: %w", err)
 	}
 	
-	return 0, fmt.Errorf("no available ports found in range 9000-9999")
-}
-
-func isPortAvailable(port int) bool {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return false
-	}
-	defer listener.Close()
-	return true
+	log.Printf("Created Agentainer network: %s", AgentainerNetworkName)
+	return nil
 }

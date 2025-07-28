@@ -9,10 +9,13 @@ redis:
   db: 0
 
 storage:
-  data_dir: ./data
+  data_dir: ~/.agentainer/data
 
 docker:
   host: unix:///var/run/docker.sock
 
 security:
   default_token: agentainer-default-token
+
+features:
+  request_persistence: true

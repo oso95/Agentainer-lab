@@ -47,6 +47,11 @@ func (s *Storage) SetAgentStatus(ctx context.Context, agentID, status string) er
 	return s.Set(ctx, key, status, 0)
 }
 
+// GetRedisClient returns the underlying Redis client
+func (s *Storage) GetRedisClient() *redis.Client {
+	return s.redisClient
+}
+
 func (s *Storage) GetAgentStatus(ctx context.Context, agentID string) (string, error) {
 	key := fmt.Sprintf("agent:%s:status", agentID)
 	return s.Get(ctx, key)
@@ -68,4 +73,26 @@ func (s *Storage) IncrementCounter(ctx context.Context, key string) error {
 
 func (s *Storage) GetCounter(ctx context.Context, key string) (int64, error) {
 	return s.redisClient.Get(ctx, key).Int64()
+}
+
+// ListAgents returns all agents from storage
+func (s *Storage) ListAgents() ([]*Agent, error) {
+	// This is a placeholder - in a real implementation, 
+	// this would be delegated to the agent manager
+	// For now, return empty slice
+	return []*Agent{}, nil
+}
+
+// GetAgent returns a specific agent from storage
+func (s *Storage) GetAgent(agentID string) (*Agent, error) {
+	// This is a placeholder - in a real implementation,
+	// this would be delegated to the agent manager
+	return nil, fmt.Errorf("agent not found")
+}
+
+// Agent represents a minimal agent structure for storage
+type Agent struct {
+	ID          string
+	Status      string
+	ContainerID string
 }

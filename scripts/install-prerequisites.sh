@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Agentainer Lab - Complete Setup Script for Fresh VMs
-# This script handles all prerequisites and installation
+# Agentainer Lab - Prerequisites Installation Script
+# This script installs all prerequisites on fresh VMs
+# Extracted from the original setup.sh
 
 set -e
 
@@ -26,7 +27,7 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
 fi
 
 echo -e "${BLUE}================================================${NC}"
-echo -e "${BLUE}     Agentainer Lab - Complete Setup Script     ${NC}"
+echo -e "${BLUE}     Installing Prerequisites for Agentainer    ${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 echo "Detected OS: $OS $DISTRO"
@@ -60,7 +61,7 @@ install_package() {
     fi
 }
 
-# Step 1: Install Git if needed
+# Install Git if needed
 if ! command_exists git; then
     echo -e "${YELLOW}Git not found. Installing...${NC}"
     install_package git
@@ -68,20 +69,7 @@ else
     echo -e "${GREEN}✓ Git is already installed${NC}"
 fi
 
-# Step 2: Clone the repository
-REPO_DIR="$HOME/agentainer-lab"
-if [ ! -d "$REPO_DIR" ]; then
-    echo -e "${YELLOW}Cloning Agentainer Lab repository...${NC}"
-    git clone https://github.com/oso95/Agentainer-lab.git "$REPO_DIR"
-    cd "$REPO_DIR"
-else
-    echo -e "${GREEN}✓ Repository already exists at $REPO_DIR${NC}"
-    cd "$REPO_DIR"
-    # Ensure we have all files
-    git pull origin main 2>/dev/null || true
-fi
-
-# Step 3: Install Go if needed
+# Install Go if needed
 if ! command_exists go; then
     echo -e "${YELLOW}Go not found. Installing Go 1.21...${NC}"
     
@@ -119,7 +107,7 @@ else
     echo -e "${GREEN}✓ Go $GO_VERSION is already installed${NC}"
 fi
 
-# Step 4: Install Docker if needed
+# Install Docker if needed
 if ! command_exists docker; then
     echo -e "${YELLOW}Docker not found. Installing...${NC}"
     
@@ -161,7 +149,7 @@ else
     echo -e "${GREEN}✓ Docker is already installed${NC}"
 fi
 
-# Step 5: Install Docker Compose if needed
+# Install Docker Compose if needed
 if ! command_exists docker-compose && ! docker compose version >/dev/null 2>&1; then
     echo -e "${YELLOW}Docker Compose not found. Installing...${NC}"
     
@@ -176,59 +164,34 @@ else
     echo -e "${GREEN}✓ Docker Compose is already installed${NC}"
 fi
 
-# Step 6: Start Docker service (Linux only)
+# Start Docker service (Linux only, skip for WSL)
 if [[ "$OS" == "linux" ]]; then
-    if ! sudo systemctl is-active --quiet docker; then
-        echo -e "${YELLOW}Starting Docker service...${NC}"
-        sudo systemctl start docker
-        sudo systemctl enable docker
+    # Check if we're in WSL
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo -e "${GREEN}✓ Running in WSL - Docker Desktop manages the Docker daemon${NC}"
     else
-        echo -e "${GREEN}✓ Docker service is running${NC}"
+        # Check if docker service exists
+        if systemctl list-unit-files | grep -q "docker.service"; then
+            if ! sudo systemctl is-active --quiet docker; then
+                echo -e "${YELLOW}Starting Docker service...${NC}"
+                sudo systemctl start docker
+                sudo systemctl enable docker
+            else
+                echo -e "${GREEN}✓ Docker service is running${NC}"
+            fi
+        else
+            echo -e "${GREEN}✓ Docker is running (managed externally)${NC}"
+        fi
     fi
 fi
 
-# Step 7: Verify all files are present
-echo -e "${YELLOW}Verifying repository files...${NC}"
-if [ ! -f "cmd/agentainer/main.go" ]; then
-    echo -e "${RED}Error: Missing cmd/agentainer/main.go${NC}"
-    echo "Repository may be incomplete. Trying to fetch all files..."
-    git fetch --all
-    git reset --hard origin/main
-fi
-
-if [ -f "cmd/agentainer/main.go" ]; then
-    echo -e "${GREEN}✓ All required files present${NC}"
-else
-    echo -e "${RED}Error: Still missing required files. Please check your git clone.${NC}"
-    exit 1
-fi
-
-# Step 8: Run the install script
-echo ""
-echo -e "${BLUE}Running Agentainer installation...${NC}"
-chmod +x install.sh
-./install.sh
-
-# Step 9: Start Redis with Docker Compose
-echo ""
-echo -e "${YELLOW}Starting Redis service...${NC}"
-if docker compose version >/dev/null 2>&1; then
-    docker compose up -d redis
-else
-    docker-compose up -d redis
-fi
-
-# Step 10: Final instructions
 echo ""
 echo -e "${GREEN}================================================${NC}"
-echo -e "${GREEN}     Agentainer Lab Setup Complete! 🎉          ${NC}"
+echo -e "${GREEN}     Prerequisites Installation Complete!       ${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 echo "Next steps:"
 echo "1. If you were added to the docker group, log out and back in"
 echo "2. Run: source ~/.bashrc"
-echo "3. Start the Agentainer server: agentainer server"
-echo "4. Deploy your first agent:"
-echo "   agentainer deploy --name my-agent --image nginx:latest"
+echo "3. Continue with: make install-user"
 echo ""
-echo -e "${YELLOW}⚠️  Remember: This is proof-of-concept software for local testing only!${NC}"
