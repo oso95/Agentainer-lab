@@ -12,7 +12,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Proof%20of%20Concept-orange" alt="Status">
-  <img src="https://img.shields.io/badge/Platform-Linux%20|%20WSL-blue" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Linux%20|%20MacOS%20|%20WSL-blue" alt="Platform">
   <img src="https://img.shields.io/badge/Architecture-Microservices-purple" alt="Architecture">
 </p>
 
