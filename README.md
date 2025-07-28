@@ -105,7 +105,7 @@
 ## 🏗️ Architecture
 
 Agentainer provides a complete infrastructure layer between your agent code and container runtime.
-<img width="1091" height="1404" alt="image" src="https://github.com/user-attachments/assets/7c8a3b72-bf6f-4663-a620-ddf5e9d8c181" />
+<img width="400" height="600" alt="image" src="https://github.com/user-attachments/assets/7c8a3b72-bf6f-4663-a620-ddf5e9d8c181" />
 
 
 ### 🎯 Why Choose Agentainer?
