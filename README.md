@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🚀 Agentainer Lab
+# 🚀 Agentainer
 
-### **Deploy and Manage LLM Agents as Containerized Microservices**
+## **The Missing Infrastructure Layer for LLM Agents**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Docker](https://img.shields.io/badge/Docker-required-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/oso95/Agentainer-lab/pulls)
 [![GitHub Stars](https://img.shields.io/github/stars/oso95/Agentainer-lab?style=social)](https://github.com/oso95/Agentainer-lab/stargazers)
@@ -16,81 +16,113 @@
   <img src="https://img.shields.io/badge/Architecture-Microservices-purple" alt="Architecture">
 </p>
 
----
+### **Deploy, manage, and scale LLM agents as containerized microservices with built-in resilience**
 
-### **Orchestrate AI agents with the simplicity of containers and the power of microservices**
-
-[**Getting Started**](#-quick-start) • [**Documentation**](#-documentation) • [**Examples**](#-examples) • [**CLI Reference**](#-cli-commands) • [**API**](#-api-reference)
+[**🚀 Quick Start**](#-quick-start) • [**📖 Documentation**](#-documentation) • [**💡 Examples**](#-examples) • [**🔧 CLI Reference**](#-cli-commands) • [**🔌 API**](#-api-reference) • [**🏗️ Architecture**](#-architecture)
 
 </div>
 
 ---
 
-## 🎯 Overview
+## 🎯 What is Agentainer?
 
-**Agentainer Lab** is a lightweight runtime that transforms LLM-based agents into containerized microservices. Deploy, manage, and scale your AI agents with the same ease as traditional web services—no frontend required.
+**Agentainer** is a container runtime specifically designed for LLM agents. Just as Docker revolutionized application deployment, Agentainer makes it dead simple to deploy, manage, and scale AI agents with production-grade reliability.
 
-<div align="center">
-  <img width="1272" height="1174" alt="image" src="https://github.com/user-attachments/assets/2d6f894c-7321-417b-ad8d-053b92669658" />
-</div>
+### The Problem
+🔴 **Building LLM agents is easy. Running them reliably in production is hard.**
+- Agents crash unexpectedly
+- Lost requests during downtime
+- Complex state management
+- No standard deployment patterns
+- Manual orchestration overhead
 
-### ✨ Key Features
+### The Solution
+✅ **Agentainer provides the missing infrastructure layer:**
+- **One command deployment**: `agentainer deploy --name my-agent --image ./Dockerfile`
+- **Automatic crash recovery** with request replay
+- **Built-in state persistence** via Redis
+- **Network isolation** with unified proxy access
+- **Production patterns** out of the box
+
+---
+
+## 🔍 How It Compares
 
 <table>
 <tr>
-<td width="50%">
-
-**🔧 Developer-First Design**
-- CLI-driven workflow
-- RESTful API with token auth
-- No frontend dependencies
-- Redis-backed state management
-- Automatic Dockerfile building
-
-</td>
-<td width="50%">
-
-**🐳 Container-Native**
-- Docker-based isolation
-- Internal network architecture
-- Persistent volume mounting
-- Smart proxy routing
-- Auto-sync with Docker state
-
-</td>
+<th>Feature</th>
+<th>Agentainer</th>
+<th>Raw Docker</th>
+<th>Kubernetes</th>
+<th>Serverless</th>
 </tr>
 <tr>
-<td width="50%">
-
-**🔄 Lifecycle Management**
-- Deploy, start, stop, pause, resume
-- Universal recovery system
-- Automatic restart policies
-- State persistence across restarts
-- Real-time state synchronization
-
-</td>
-<td width="50%">
-
-**📊 Advanced Features**
-- Request persistence & replay
-- Crash resilience
-- Real-time container logs
-- Health check endpoints
-- Image validation & auto-build
-
-</td>
+<td><b>Deployment Speed</b></td>
+<td>✅ < 30 seconds</td>
+<td>⚠️ Manual setup</td>
+<td>❌ Complex YAML</td>
+<td>✅ Fast</td>
+</tr>
+<tr>
+<td><b>State Management</b></td>
+<td>✅ Built-in Redis</td>
+<td>❌ DIY</td>
+<td>⚠️ External</td>
+<td>❌ Stateless</td>
+</tr>
+<tr>
+<td><b>Request Persistence</b></td>
+<td>✅ Automatic</td>
+<td>❌ Not included</td>
+<td>❌ Not included</td>
+<td>❌ Lost on timeout</td>
+</tr>
+<tr>
+<td><b>Crash Recovery</b></td>
+<td>✅ With replay</td>
+<td>⚠️ Restart only</td>
+<td>⚠️ Restart only</td>
+<td>✅ Auto-retry</td>
+</tr>
+<tr>
+<td><b>Local Development</b></td>
+<td>✅ Optimized</td>
+<td>✅ Native</td>
+<td>❌ Heavy</td>
+<td>❌ Cloud only</td>
+</tr>
+<tr>
+<td><b>LLM-Specific</b></td>
+<td>✅ Purpose-built</td>
+<td>❌ Generic</td>
+<td>❌ Generic</td>
+<td>❌ Generic</td>
 </tr>
 </table>
 
-### 🆕 What's New
+---
 
-- **Automatic Dockerfile Building**: Deploy directly from Dockerfiles - Agentainer builds images automatically
-- **Real-time State Sync**: Agent states automatically sync with Docker containers every 10 seconds
-- **Image Validation**: Prevents deployment errors by validating Docker images before creating agents
-- **Network Isolation**: Agents run in isolated internal networks with no direct port exposure
-- **Request Persistence**: Automatic queuing and replay of requests to unavailable agents
-- **YAML Deployments**: Deploy multiple agents at once using YAML configuration files
+## 🏗️ Architecture
+
+Agentainer provides a complete infrastructure layer between your agent code and container runtime.
+
+
+### 🎯 Why Choose Agentainer?
+
+<table>
+<tr>
+<th width="25%">🚀 Deploy in Seconds</th>
+<th width="25%">💪 Never Lose Data</th>
+<th width="25%">🔒 Secure by Default</th>
+<th width="25%">🎯 Purpose-Built</th>
+</tr>
+<tr>
+<td>From code to running agent with one command</td>
+<td>Built-in Redis + request queuing + auto-recovery</td>
+<td>Network isolation, no direct port exposure</td>
+<td>Designed specifically for LLM agent workloads</td>
+</tr>
+</table>
 
 ---
 
@@ -108,330 +140,311 @@
 
 ---
 
+---
+
+## 📸 Perfect For
+
+<table>
+<tr>
+<td width="33%">
+
+**💬 Customer Support Bots**
+
+Stateful agents that remember conversation history and customer context across sessions.
+
+</td>
+<td width="33%">
+
+**🔄 Data Processing Pipelines**
+
+Multi-agent workflows with automatic retries and state checkpointing.
+
+</td>
+<td width="33%">
+
+**🤖 Personal Assistants**
+
+Long-running agents that handle tasks asynchronously without losing progress.
+
+</td>
+</tr>
+<tr>
+<td width="33%">
+
+**📋 Research Agents**
+
+Agents that collect data over time and need persistent storage.
+
+</td>
+<td width="33%">
+
+**🎯 API Gateways**
+
+Intelligent routers that adapt based on traffic patterns and errors.
+
+</td>
+<td width="33%">
+
+**📊 Analytics Agents**
+
+Agents that process metrics and maintain rolling aggregations.
+
+</td>
+</tr>
+</table>
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
+- **Docker** (required)
+- **Go 1.23+** (for building from source)
+- **Git** (for cloning)
 
-- **Go** 1.21 or higher
-- **Docker** (for running agents)
-- **Redis** (install locally or run via Docker)
-- **Git** (for cloning the repository)
-
-> **Note**: Use `make setup` to install all prerequisites automatically on fresh VMs.
-
-### Installation
-
-<details>
-<summary><b>Option 1: Quick Setup (Recommended for Fresh VMs)</b></summary>
+### Installation (< 2 minutes)
 
 ```bash
-# Clone the repository
+# Clone and install
 git clone https://github.com/oso95/Agentainer-lab.git
 cd agentainer-lab
+make setup    # Installs everything including prerequisites
 
-# Complete setup (installs prerequisites + Agentainer)
-make setup
-
-# Update your PATH
-source ~/.bashrc
-
-# Start Agentainer server (containerized for proper networking)
-./scripts/start-server.sh
-
-# Or manually:
-docker network create agentainer-network
-docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
-docker build -t agentainer:latest .
-docker run -d --name agentainer-server \
-  --network agentainer-network \
-  -p 8081:8081 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e AGENTAINER_REDIS_HOST=host.docker.internal \
-  --add-host host.docker.internal:host-gateway \
-  agentainer:latest
+# Start Agentainer
+make run
 ```
 
-</details>
-
-<details>
-<summary><b>Option 2: Standard Installation</b></summary>
+### Your First Agent (< 30 seconds)
 
 ```bash
-# Clone the repository
-git clone https://github.com/oso95/Agentainer-lab.git
-cd agentainer-lab
+# 1. Deploy a simple agent
+agentainer deploy --name hello-world --image nginx:latest
 
-# Install Agentainer (assumes prerequisites are installed)
-make install-user
+# 2. Start it
+agentainer start hello-world
 
-# Update your PATH
-source ~/.bashrc
-
-# Start Agentainer server (containerized for proper networking)
-./scripts/start-server.sh
-
-# Or manually:
-docker network create agentainer-network
-docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
-docker build -t agentainer:latest .
-docker run -d --name agentainer-server \
-  --network agentainer-network \
-  -p 8081:8081 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e AGENTAINER_REDIS_HOST=host.docker.internal \
-  --add-host host.docker.internal:host-gateway \
-  agentainer:latest
+# 3. Access it (no auth needed for proxy)
+curl http://localhost:8081/agent/hello-world/
 ```
 
-</details>
-
-
-### Verify Installation
+### Deploy an LLM Agent (< 1 minute)
 
 ```bash
-# Check that everything is installed correctly
-make verify
-```
+# 1. Use the GPT example
+cd examples/gpt-agent
+cp .env.example .env
+# Add your OpenAI API key to .env
 
-### Your First Agent
+# 2. Deploy from Dockerfile
+agentainer deploy --name gpt-bot --image ./Dockerfile
 
-```bash
-# Deploy from a Docker image
-agentainer deploy --name my-first-agent --image nginx:latest
+# 3. Start and test
+agentainer start gpt-bot
 
-# Deploy from a Dockerfile (auto-builds the image!)
-agentainer deploy --name my-custom-agent --image ./Dockerfile
-
-# Or deploy multiple agents from YAML
-agentainer deploy --config examples/deployments/basic-agents.yaml
-
-# Start the agent
-agentainer start <agent-id>
-
-# Access your agent through the proxy (no auth needed):
-curl http://localhost:8081/agent/<agent-id>/
-
-# Check agent status via API (auth required):
-curl http://localhost:8081/agents/<agent-id> \
-  -H "Authorization: Bearer agentainer-default-token"
+# 4. Chat with your agent
+curl -X POST http://localhost:8081/agent/gpt-bot/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello! What is Agentainer?"}'
 ```
 
 ---
 
-## 🏗️ Architecture
+## 💡 Examples
 
-### Network-Isolated Agent Model
+### Example 1: Stateful Chat Agent with Memory
 
-Each agent runs in complete isolation with:
+<details>
+<summary><b>View Code</b></summary>
 
-- **🔒 Container Isolation**: Dedicated Docker container per agent
-- **🌐 Internal Network**: Agents communicate only through the proxy
-- **🚫 No Direct Ports**: No external port exposure for security
-- **💾 Persistent Storage**: Volume mounts for data persistence
-- **🔗 Unified Access**: All access through proxy at port 8081
+```python
+# app.py - A GPT agent that remembers conversations
+import os
+import redis
+from flask import Flask, request, jsonify
 
-### Automatic State Synchronization
+app = Flask(__name__)
 
-Agentainer automatically keeps agent states synchronized with Docker:
+# Connect to Agentainer's Redis
+redis_client = redis.Redis(
+    host='host.docker.internal', 
+    port=6379
+)
 
-- **🔄 Real-time Sync**: States update every 10 seconds automatically
-- **🐳 Docker Events**: Monitors Docker events for immediate updates
-- **🎯 Consistency**: CLI and API always show accurate container states
-- **🔧 No Manual Intervention**: Sync happens transparently in background
-- **📊 Unified State Store**: Single Redis instance for all components
-
-### Request Persistence & Replay
-
-Agentainer ensures reliable message delivery with:
-
-- **📬 Request Queuing**: Stores requests when agents are unavailable
-- **🔄 Automatic Replay**: Replays queued requests when agents start
-- **💪 Crash Resilience**: Preserves requests even during agent crashes
-- **📊 Status Tracking**: Monitor pending/completed/failed requests
-
-### Agent Lifecycle States
-
-```mermaid
-stateDiagram-v2
-    [*] --> Created: Deploy
-    Created --> Running: Start
-    Running --> Stopped: Stop/Crash
-    Running --> Paused: Pause
-    Paused --> Running: Resume
-    Stopped --> Running: Resume/Start
-    Created --> Running: Resume
-    Running --> [*]: Remove
-    Stopped --> [*]: Remove
-    Paused --> [*]: Remove
+@app.route('/chat', methods=['POST'])
+def chat():
+    user_msg = request.json['message']
+    
+    # Get conversation history from Redis
+    history = redis_client.lrange('conversations', 0, 5)
+    
+    # Call OpenAI with context
+    response = openai_chat_with_history(user_msg, history)
+    
+    # Save to Redis for next time
+    redis_client.lpush('conversations', f"User: {user_msg}")
+    redis_client.lpush('conversations', f"AI: {response}")
+    
+    return jsonify({'response': response})
 ```
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install flask redis openai gunicorn
+COPY app.py .
+COPY .env .
+EXPOSE 8000
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+```
+
+```bash
+# Deploy and use
+agentainer deploy --name memory-bot --image ./Dockerfile
+agentainer start memory-bot
+
+# First conversation
+curl -X POST http://localhost:8081/agent/memory-bot/chat \
+  -d '{"message": "My name is Alice"}'
+# Response: "Nice to meet you, Alice!"
+
+# Later conversation - it remembers!
+curl -X POST http://localhost:8081/agent/memory-bot/chat \
+  -d '{"message": "What is my name?"}'
+# Response: "Your name is Alice."
+```
+
+</details>
+
+### Example 2: Multi-Agent Pipeline
+
+<details>
+<summary><b>View YAML Deployment</b></summary>
+
+```yaml
+# agents.yaml - Deploy a complete LLM pipeline
+apiVersion: v1
+kind: AgentDeployment
+metadata:
+  name: llm-pipeline
+spec:
+  agents:
+    # Agent 1: Data Collector
+    - name: collector
+      image: ./collector/Dockerfile
+      env:
+        COLLECT_INTERVAL: "60"
+      volumes:
+        - host: ./data
+          container: /app/data
+      
+    # Agent 2: Processor with GPU
+    - name: processor  
+      image: ./processor/Dockerfile
+      resources:
+        memory: 4G
+        cpu: 2
+      env:
+        MODEL: "llama2"
+        
+    # Agent 3: API Gateway
+    - name: gateway
+      image: ./gateway/Dockerfile
+      healthCheck:
+        endpoint: /health
+        interval: 30s
+      autoRestart: true
+```
+
+```bash
+# Deploy entire pipeline
+agentainer deploy --config agents.yaml
+
+# All agents start with crash recovery
+# and request persistence enabled
+```
+
+</details>
+
+### Example 3: Production-Ready Agent
+
+<details>
+<summary><b>View Production Pattern</b></summary>
+
+```python
+# Resilient agent with state checkpointing
+import signal
+import json
+import os
+
+class ResilientAgent:
+    def __init__(self):
+        # Handle graceful shutdown
+        signal.signal(signal.SIGTERM, self.shutdown)
+        
+        # Load previous state if exists
+        self.checkpoint = self.load_checkpoint()
+        
+    def process_batch(self, items):
+        for i, item in enumerate(items):
+            try:
+                # Process item
+                result = self.process_item(item)
+                
+                # Save progress after each item
+                self.checkpoint['last_processed'] = i
+                self.checkpoint['results'].append(result)
+                self.save_checkpoint()
+                
+            except Exception as e:
+                # On error, we can resume from checkpoint
+                self.handle_error(e, item)
+                
+    def shutdown(self, signum, frame):
+        """Save state before container stops"""
+        self.save_checkpoint()
+        sys.exit(0)
+```
+
+```bash
+# Deploy with persistent volume
+agentainer deploy \
+  --name resilient-processor \
+  --image ./Dockerfile \
+  --volume /data/checkpoints:/app/checkpoints \
+  --auto-restart
+
+# Even if it crashes, it resumes from checkpoint
+# Agentainer replays any missed requests
+```
+
+</details>
+
 
 ---
 
 ## 📖 Documentation
 
-### 🛠️ CLI Commands
-
-<details>
-<summary><b>Core Commands</b></summary>
+### Quick Reference
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `deploy` | Deploy a new agent | `agentainer deploy --name web-agent --image nginx:latest` |
-| `start` | Start a deployed agent | `agentainer start agent-123` |
-| `stop` | Stop a running agent | `agentainer stop agent-123` |
-| `restart` | Restart a running agent | `agentainer restart agent-123` |
-| `pause` | Pause agent execution | `agentainer pause agent-123` |
-| `resume` | Resume any non-running agent | `agentainer resume agent-123` |
-| `remove` | Remove agent completely | `agentainer remove agent-123` |
+| `deploy` | Deploy a new agent | `agentainer deploy --name my-agent --image nginx` |
+| `start` | Start an agent | `agentainer start my-agent` |
+| `stop` | Stop an agent | `agentainer stop my-agent` |
+| `resume` | Resume crashed agent | `agentainer resume my-agent` |
 | `list` | List all agents | `agentainer list` |
-| `logs` | View agent logs | `agentainer logs agent-123 --follow` |
-| `requests` | View pending requests | `agentainer requests agent-123` |
-| `health` | View health status | `agentainer health` or `agentainer health agent-123` |
-| `metrics` | View resource metrics | `agentainer metrics agent-123` or `agentainer metrics agent-123 --history` |
-| `backup` | Backup/restore agents | `agentainer backup create --name daily` or `agentainer backup restore backup-123` |
-| `audit` | View audit logs | `agentainer audit` or `agentainer audit --action deploy_agent --duration 1h` |
+| `logs` | View agent logs | `agentainer logs my-agent` |
 
-</details>
+**[📖 Full Documentation →](docs/)** including:
+- [CLI Reference](docs/CLI_REFERENCE.md) - All commands and options
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Advanced deployment patterns  
+- [Building Resilient Agents](docs/RESILIENT_AGENTS.md) - Production patterns
+- [API Endpoints](docs/API_ENDPOINTS.md) - REST API reference
+- [Network Architecture](docs/NETWORK_ARCHITECTURE.md) - Networking details
 
-<details>
-<summary><b>Deploy from Dockerfile</b></summary>
 
-Agentainer can automatically build Docker images from Dockerfiles during deployment:
 
-```bash
-# Deploy directly from a Dockerfile
-agentainer deploy --name my-agent --image ./Dockerfile
-
-# Deploy from a Dockerfile in another directory
-agentainer deploy --name web-app --image ./my-app/Dockerfile.production
-
-# The system will:
-# 1. Detect that you're providing a Dockerfile
-# 2. Build the image automatically with progress display
-# 3. Generate a unique image name (e.g., agentainer-my-agent:20241227-143052)
-# 4. Deploy the agent using the built image
-```
-
-**Features:**
-- **Automatic Detection**: Recognizes Dockerfile vs image name
-- **Progress Display**: Shows build progress with spinner
-- **Smart Naming**: Generates unique image names to prevent conflicts
-- **Build Context**: Uses the Dockerfile's directory as build context
-- **Error Handling**: Validates images before deployment
-
-</details>
-
-<details>
-<summary><b>Advanced Deployment Options</b></summary>
-
-```bash
-agentainer deploy \
-  --name production-agent \
-  --image my-agent:v1.0 \               # Can also be a Dockerfile path!
-  --volume ./data:/app/data \          # Persistent storage
-  --volume ./config:/app/config:ro \   # Read-only config
-  --env API_KEY=secret \               # Environment variables
-  --env DEBUG=false \
-  --cpu 1 \                            # CPU limit (1 core)
-  --memory 512M \                      # Memory limit (512MB)
-  --auto-restart \                     # Restart on failure
-  --token custom-auth-token \          # Custom auth token
-  --health-endpoint /health \          # Health check endpoint
-  --health-interval 30s \              # Check interval
-  --health-timeout 5s \                # Request timeout
-  --health-retries 3                   # Retries before restart
-```
-
-> **Note**: Direct port mappings (`--port`) are deprecated for security. All agent access is through the proxy.
-
-</details>
-
-<details>
-<summary><b>YAML Batch Deployment</b></summary>
-
-Deploy multiple agents at once using YAML configuration files:
-
-```yaml
-# agents.yaml
-apiVersion: v1
-kind: AgentDeployment
-metadata:
-  name: my-deployment
-  description: Deploy multiple agents at once
-spec:
-  agents:
-    - name: web-agent
-      image: nginx:alpine
-      replicas: 2
-      resources:
-        memory: 256M
-        cpu: 0.5
-      volumes:
-        - host: ./web-data
-          container: /usr/share/nginx/html
-      autoRestart: true
-      healthCheck:
-        endpoint: /
-        interval: 30s
-        retries: 3
-    
-    - name: api-agent
-      image: node:18-alpine
-      env:
-        NODE_ENV: production
-      resources:
-        memory: 512M
-        cpu: 1
-```
-
-Deploy with:
-```bash
-agentainer deploy --config agents.yaml
-```
-
-See `examples/deployments/` for more YAML examples including:
-- `basic-agents.yaml` - Simple multi-agent deployment
-- `llm-pipeline.yaml` - Complex LLM processing pipeline
-
-</details>
-
-### 🔄 Resume vs Restart
-
-| Feature | Resume | Restart |
-|---------|--------|---------|
-| **Works on** | Any non-running agent | Only running agents |
-| **Behavior** | Smart recovery | Clean stop + start |
-| **Use case** | Primary recovery method | Refresh running agent |
-| **State** | Preserves all data | Preserves all data |
-
-### 🌐 Access Methods
-
-Agentainer provides two different endpoints for interacting with agents:
-
-#### 1. **Proxy Endpoint** (Access agent's service): `/agent/<id>/`
-Used to access the agent's actual service endpoints (no authentication required):
-```bash
-# Routes requests to the agent's internal web service
-curl http://localhost:8081/agent/agent-123/
-curl http://localhost:8081/agent/agent-123/chat
-curl http://localhost:8081/agent/agent-123/api/v1/completions
-```
-
-#### 2. **API Endpoint** (Manage agent): `/agents/<id>`
-Used to get agent information and control the agent via REST API (requires authentication):
-```bash
-# Get agent details, status, configuration
-curl http://localhost:8081/agents/agent-123 \
-  -H "Authorization: Bearer agentainer-default-token"
-
-# Control agent (start, stop, restart)
-curl -X POST http://localhost:8081/agents/agent-123/start \
-  -H "Authorization: Bearer agentainer-default-token"
-```
-
-**Key Differences:**
-- **Proxy endpoint** (`/agent/<id>/`) - Public access, no auth required, routes to agent's service
-- **API endpoint** (`/agents/<id>`) - Requires auth token, manages agent lifecycle
 
 ### 📬 Request Persistence
 
@@ -474,7 +487,7 @@ agentainer deploy --name my-agent --image my-app:latest \
   --auto-restart
 ```
 
-### 📊 Resource Monitoring
+### 📊 Resource Monitoring (Coming Soon)
 
 Real-time resource monitoring for all agents with historical data:
 
@@ -498,7 +511,7 @@ curl http://localhost:8081/agents/agent-123/metrics \
   -H "Authorization: Bearer agentainer-default-token"
 ```
 
-### 💾 Backup & Restore
+### 💾 Backup & Restore (Coming Soon)
 
 Complete backup solution for agent configurations and persistent data:
 
@@ -530,7 +543,7 @@ agentainer backup export backup-1234567890 production-backup.tar.gz
 agentainer backup delete backup-1234567890
 ```
 
-### 📝 Logging & Audit Trail
+### 📝 Logging & Audit Trail (Coming Soon)
 
 Comprehensive logging system with structured logs and audit trails:
 
@@ -565,477 +578,74 @@ agentainer audit --limit 1000 > audit-export.log
 
 ## 🔌 API Reference
 
-### Understanding Proxy vs API Endpoints
+### Two Endpoints, Two Purposes
 
-Agentainer provides two distinct types of endpoints for different purposes:
+<table>
+<tr>
+<td width="50%">
 
-#### 🔧 API Endpoints (`/agents/*`) - Management Operations
-- **Purpose**: Control and manage agent lifecycle
-- **Authentication**: Required (Bearer token)
-- **Use when you want to**:
-  - Deploy, start, stop, or remove agents
-  - View agent status and configuration
-  - Monitor logs and metrics
-  - Manage agent resources
+**🔧 API Endpoints** (`/agents/*`)
+- Manage agent lifecycle
+- Requires authentication
+- Deploy, start, stop agents
 
-**Example**: Managing an agent
 ```bash
-# Deploy a new agent
+# Deploy agent
 curl -X POST http://localhost:8081/agents \
-  -H "Authorization: Bearer your-token" \
-  -d '{"name": "my-agent", "image": "my-agent:latest"}'
-
-# Check agent status
-curl http://localhost:8081/agents/agent-123 \
-  -H "Authorization: Bearer your-token"
+  -H "Authorization: Bearer token" \
+  -d '{"name": "my-agent", "image": "nginx"}'
 ```
 
-#### 🌐 Proxy Endpoint (`/agent/*`) - Direct Agent Access
-- **Purpose**: Communicate directly with your agent's application
-- **Authentication**: Not required (public access)
-- **Use when you want to**:
-  - Call any HTTP endpoint your agent exposes
-  - Send requests to your agent's application
-  - Integrate your agent with external services
-  - Test your agent's API endpoints
+</td>
+<td width="50%">
 
-**Example**: Accessing your agent's application
-```bash
-# If your agent exposes a root endpoint
-curl http://localhost:8081/agent/agent-123/
-
-# If your agent has an API endpoint
-curl -X POST http://localhost:8081/agent/agent-123/api/chat \
-  -d '{"message": "Hello, agent!"}'
-
-# Access any path your agent exposes
-curl http://localhost:8081/agent/agent-123/health
-```
-
-#### 🤔 Which Should You Use?
-
-| Task | Use | Example |
-|------|-----|---------|
-| Deploy a new agent | API | `POST /agents` |
-| Stop a running agent | API | `POST /agents/{id}/stop` |
-| Check if agent exists | API | `GET /agents/{id}` |
-| Call your agent's REST API | Proxy | `POST /agent/{id}/api/endpoint` |
-| Access your agent's endpoints | Proxy | `GET /agent/{id}/` |
-| Send data to your agent | Proxy | `POST /agent/{id}/process` |
-
-**Quick tip**: Remember "agents" (plural) = API, "agent" (singular) = Proxy
-
-See [API Endpoints Documentation](docs/API_ENDPOINTS.md) for complete reference.
-
-<details>
-<summary><b>REST Endpoints</b></summary>
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| **Server Endpoints** | | | |
-| GET | `/health` | Agentainer server health check | No |
-| **API Endpoints** | | | |
-| POST | `/agents` | Deploy new agent | Yes |
-| GET | `/agents` | List all agents | Yes |
-| GET | `/agents/{id}` | Get agent details | Yes |
-| POST | `/agents/{id}/start` | Start agent | Yes |
-| POST | `/agents/{id}/stop` | Stop agent | Yes |
-| POST | `/agents/{id}/restart` | Restart running agent | Yes |
-| POST | `/agents/{id}/pause` | Pause agent | Yes |
-| POST | `/agents/{id}/resume` | Resume agent | Yes |
-| DELETE | `/agents/{id}` | Remove agent | Yes |
-| GET | `/agents/{id}/logs` | Get agent logs | Yes |
-| GET | `/agents/{id}/metrics` | Get current agent metrics | Yes |
-| GET | `/agents/{id}/metrics/history` | Get agent metrics history | Yes |
-| GET | `/agents/{id}/requests` | Get pending requests | Yes |
-| GET | `/agents/{id}/requests/{reqId}` | Get specific request | Yes |
-| POST | `/agents/{id}/requests/{reqId}/replay` | Manually replay request | Yes |
-| GET | `/agents/{id}/health` | Get agent health monitoring status | Yes |
-| GET | `/health/agents` | Get all agents health status | Yes |
-| **Proxy Endpoints** | | | |
-| ANY | `/agent/{id}/*` | Direct proxy to any agent endpoint | No |
-| GET | `/agent/{id}/health` | Example: Access agent's health endpoint | No |
-| POST | `/agent/{id}/api/*` | Example: Access agent's API endpoints | No |
-
-</details>
-
-<details>
-<summary><b>Example API Usage</b></summary>
+**🌐 Proxy Endpoints** (`/agent/*`)
+- Access your agents directly
+- No authentication needed
+- Call your agent's APIs
 
 ```bash
-# Deploy an agent
-curl -X POST http://localhost:8081/agents \
-  -H "Authorization: Bearer agentainer-default-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "api-agent",
-    "image": "my-api:latest",
-    "volumes": [{"host_path": "./data", "container_path": "/data"}],
-    "env_vars": {"NODE_ENV": "production"}
-  }'
-
-# Start the agent
-curl -X POST http://localhost:8081/agents/{id}/start \
-  -H "Authorization: Bearer agentainer-default-token"
-
-# Stream logs
-curl http://localhost:8081/agents/{id}/logs?follow=true \
-  -H "Authorization: Bearer agentainer-default-token"
-
-# Check pending requests
-curl http://localhost:8081/agents/{id}/requests \
-  -H "Authorization: Bearer agentainer-default-token"
+# Chat with agent
+curl -X POST http://localhost:8081/agent/my-agent/chat \
+  -d '{"message": "Hello!"}'
 ```
 
-</details>
+</td>
+</tr>
+</table>
 
----
+**Quick tip**: "agents" (plural) = API, "agent" (singular) = Proxy
 
-## 🎯 Examples
+**[📖 Full API Documentation →](docs/API_ENDPOINTS.md)**
 
-### Deploy from Dockerfile
-
-```bash
-# Example 1: Deploy from a simple Dockerfile
-cat > Dockerfile.hello <<EOF
-FROM python:3.11-slim
-RUN echo 'print("Hello from Agentainer!")' > app.py
-CMD ["python", "app.py"]
-EOF
-
-agentainer deploy --name hello-world --image Dockerfile.hello
-agentainer start <agent-id>
-
-# Example 2: Deploy from existing project Dockerfile
-agentainer deploy \
-  --name my-api \
-  --image ./my-project/Dockerfile \
-  --env NODE_ENV=production \
-  --volume ./config:/app/config:ro
-
-# Example 3: Deploy LLM agent from example
-agentainer deploy \
-  --name llm-agent \
-  --image examples/llm-agent/Dockerfile \
-  --env OPENAI_API_KEY=$OPENAI_API_KEY \
-  --volume ./llm-data:/app/state
-```
-
-### Real-World Example: API vs Proxy Usage
-
-Here's a practical example deploying and using a chatbot agent:
-
-```bash
-# 1. Deploy the chatbot agent using the API
-curl -X POST http://localhost:8081/agents \
-  -H "Authorization: Bearer agentainer-default-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "chatbot",
-    "image": "examples/llm-agent/Dockerfile",
-    "env_vars": {"OPENAI_API_KEY": "your-key"}
-  }'
-
-# 2. Start the agent using the API
-curl -X POST http://localhost:8081/agents/agent-123/start \
-  -H "Authorization: Bearer agentainer-default-token"
-
-# 3. Check agent status using the API
-curl http://localhost:8081/agents/agent-123 \
-  -H "Authorization: Bearer agentainer-default-token"
-# Returns: {"name": "chatbot", "status": "running", ...}
-
-# 4. Now interact with your chatbot using the PROXY (no auth!)
-curl -X POST http://localhost:8081/agent/agent-123/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello, how are you?"}'
-# Returns: {"response": "I'm doing well, thank you! How can I help you today?"}
-
-# 5. Access the agent's health endpoint using the PROXY
-curl http://localhost:8081/agent/agent-123/health
-
-# 6. Monitor agent logs using the API
-curl http://localhost:8081/agents/agent-123/logs \
-  -H "Authorization: Bearer agentainer-default-token"
-
-# 7. When done, stop the agent using the API
-curl -X POST http://localhost:8081/agents/agent-123/stop \
-  -H "Authorization: Bearer agentainer-default-token"
-```
-
-**Key Takeaway**: 
-- Use **API** (`/agents/*`) for management tasks (requires auth)
-- Use **Proxy** (`/agent/*`) to interact with your agent's actual application (no auth)
-
-### Building Resilient Agents
-
-Agentainer provides infrastructure-level resilience features:
-- **Automatic Request Replay**: Failed requests are queued and replayed when agents recover
-- **Crash Recovery**: Agents can be restarted with `agentainer resume` after any failure
-- **Persistent Volumes**: Mount volumes to preserve agent data across restarts
-
-However, your agent code needs to handle its own application-level state. Here are proven patterns for implementing resilient agent logic:
-
-#### Why These Patterns?
-
-While Agentainer handles:
-- ✅ Restarting crashed containers
-- ✅ Replaying failed HTTP requests
-- ✅ Preserving volume data
-
-Your agent code should handle:
-- ❌ Saving processing state between requests
-- ❌ Resuming interrupted batch operations
-- ❌ Graceful shutdown on SIGTERM
-- ❌ Checkpoint/restore for long-running tasks
-
-#### State Persistence Pattern
-
-**Use this when:** Your agent processes data in batches or maintains session state
-
-```python
-# StatefulAgent: Maintains state across restarts
-import json
-import os
-from datetime import datetime
-
-class StatefulAgent:
-    def __init__(self):
-        self.state_dir = '/app/data'
-        self.state_file = os.path.join(self.state_dir, 'state.json')
-        self.load_state()
-
-    def load_state(self):
-        """Load state from persistent storage"""
-        if os.path.exists(self.state_file):
-            with open(self.state_file, 'r') as f:
-                self.state = json.load(f)
-        else:
-            self.state = {
-                "processed_count": 0,
-                "last_run": None,
-                "config": {},
-                "history": []
-            }
-
-    def save_state(self):
-        """Save state to persistent storage"""
-        os.makedirs(self.state_dir, exist_ok=True)
-        with open(self.state_file, 'w') as f:
-            json.dump(self.state, f, indent=2)
-
-    def process(self, data):
-        # Update state
-        self.state["processed_count"] += 1
-        self.state["last_run"] = datetime.now().isoformat()
-        self.state["history"].append({
-            "timestamp": datetime.now().isoformat(),
-            "data": data
-        })
-
-        # Save immediately for persistence
-        self.save_state()
-```
-
-#### Auto-Recovery Pattern
-
-**Use this when:** Your agent performs long-running operations that shouldn't restart from scratch
-
-```python
-# SelfHealingAgent: Recovers from interruptions gracefully
-import signal
-import sys
-import json
-import os
-
-class SelfHealingAgent:
-    def __init__(self):
-        # Set up signal handlers for graceful shutdown
-        signal.signal(signal.SIGTERM, self.handle_shutdown)
-        signal.signal(signal.SIGINT, self.handle_shutdown)
-
-        # Initialize state
-        self.last_processed = None
-        self.pending_tasks = []
-        self.current_state = {}
-
-        # Load previous state
-        self.load_checkpoint()
-
-    def handle_shutdown(self, signum, frame):
-        """Save state before shutdown"""
-        print(f"Received signal {signum}, saving checkpoint...")
-        self.save_checkpoint()
-        sys.exit(0)
-
-    def save_checkpoint(self):
-        """Save current progress"""
-        checkpoint = {
-            "last_processed": self.last_processed,
-            "queue": self.pending_tasks,
-            "state": self.current_state
-        }
-        os.makedirs('/app/data', exist_ok=True)
-        with open('/app/data/checkpoint.json', 'w') as f:
-            json.dump(checkpoint, f)
-
-    def load_checkpoint(self):
-        """Resume from last checkpoint"""
-        if os.path.exists('/app/data/checkpoint.json'):
-            with open('/app/data/checkpoint.json', 'r') as f:
-                checkpoint = json.load(f)
-                self.last_processed = checkpoint.get('last_processed')
-                self.pending_tasks = checkpoint.get('queue', [])
-                self.current_state = checkpoint.get('state', {})
-                print(f"Resumed from checkpoint: {len(self.pending_tasks)} tasks pending")
-```
-
-#### Deployment with Persistence
-
-```bash
-# Deploy an agent with persistent volume for state
-agentainer deploy \
-  --name resilient-agent \
-  --image my-agent:latest \
-  --volume /host/agent-data:/app/data \
-  --env AGENT_ID=agent-001 \
-  --auto-restart
-
-# The agent will:
-# - Save state to /app/data (persisted on host)
-# - Automatically restart on failure
-# - Resume from last checkpoint on startup
-# - Have requests queued if it crashes
-```
-
-#### Summary: Division of Responsibilities
-
-| Feature | Agentainer Provides | Your Agent Code Handles |
-|---------|-------------------|------------------------|
-| Container restart | ✅ Auto-restart on crash | Save state before crash |
-| HTTP requests | ✅ Queue & replay failed requests | Process requests idempotently |
-| Storage | ✅ Persistent volume mounts | Read/write state files |
-| Networking | ✅ Proxy & internal network | Handle connection errors |
-| Lifecycle | ✅ Start/stop/pause/resume | Graceful shutdown logic |
-
-### Multi-Agent Deployment
-
-```bash
-# Deploy a pipeline of agents
-agentainer deploy --name data-collector --image collector:latest
-agentainer deploy --name data-processor --image processor:latest  
-agentainer deploy --name data-storage --image storage:latest
-
-# Start all agents
-agentainer start data-collector
-agentainer start data-processor
-agentainer start data-storage
-
-# All agents are isolated and communicate through the proxy
-```
 
 ---
 
 ## 🛠️ Development
 
-### Project Structure
-
-```
-agentainer-lab/
-├── cmd/agentainer/      # CLI entry point
-├── internal/            # Private packages
-│   ├── agent/          # Agent lifecycle
-│   ├── api/            # REST API server
-│   ├── config/         # Configuration
-│   ├── requests/       # Request persistence
-│   └── storage/        # Redis storage
-├── pkg/                # Public packages
-│   ├── docker/         # Docker client
-│   └── metrics/        # Metrics collection
-├── scripts/            # Helper scripts
-│   ├── tests/          # Test scripts
-│   └── deprecated/     # Legacy scripts
-├── examples/           # Example agents
-│   ├── simple-agent/   # Basic Flask agent
-│   ├── llm-agent/      # Multi-provider LLM agent
-│   └── deployments/    # YAML deployment examples
-└── docs/              # Documentation
-```
-
-### Building from Source
+### Quick Start Development
 
 ```bash
-# Development build
-make build
+# Clone the repo
+git clone https://github.com/oso95/Agentainer-lab.git
+cd agentainer-lab
 
-# Production build
-make build-prod
+# Build and run
+make build
+make run
 
 # Run tests
 make test
-
-# Run integration tests
-make test-all
 ```
 
-### Deployment Options
-
-#### Option 1: Containerized Server (Recommended for Development)
-Run Agentainer server as a container to ensure proper network connectivity:
+### Key Commands
 
 ```bash
-# Use the provided script
-./scripts/start-server.sh
-
-# Or manually:
-docker network create agentainer-network
-docker run -d -p 6379:6379 --name agentainer-redis redis:7-alpine
-docker build -t agentainer:latest .
-docker run -d --name agentainer-server \
-  --network agentainer-network \
-  -p 8081:8081 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e AGENTAINER_REDIS_HOST=host.docker.internal \
-  --add-host host.docker.internal:host-gateway \
-  agentainer:latest
+make help        # Show all available commands
+make setup       # Complete setup for fresh VMs
+make verify      # Verify installation
+make test-all    # Run all tests including integration
 ```
-
-This setup:
-- Allows server to reach agent containers by hostname
-- CLI commands work normally
-- Agents can still communicate with each other
-
-#### Option 2: Docker Compose
-For a fully containerized setup:
-
-```bash
-docker-compose up -d
-```
-
-This will start both Redis (on port 6379) and Agentainer server (on port 8081). You can use both CLI commands and the API!
-
-### Available Make Commands
-
-```bash
-make help              # Show all available commands
-make setup            # Complete setup for fresh VMs
-make verify           # Verify installation
-make test-network     # Test network isolation
-make test-persistence # Test request persistence
-make test-crash       # Test crash resilience
-```
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ---
 
@@ -1059,6 +669,45 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ---
 
+## 🤝 Contributing
+
+We welcome contributions! Agentainer is in active development and we'd love your help making it better.
+
+### How to Contribute
+
+1. **🐛 Report Bugs**: [Open an issue](https://github.com/oso95/Agentainer-lab/issues) with reproduction steps
+2. **💡 Suggest Features**: [Start a discussion](https://github.com/oso95/Agentainer-lab/discussions) about your idea
+3. **📦 Submit PRs**: Fork, branch, code, test, and submit!
+4. **📖 Improve Docs**: Help us make the docs clearer
+5. **🧪 Share Examples**: Add your agent examples to inspire others
+
+### Development Setup
+
+```bash
+# Fork and clone
+git clone https://github.com/YOUR-USERNAME/Agentainer-lab.git
+cd agentainer-lab
+
+# Create feature branch  
+git checkout -b feature/amazing-feature
+
+# Make changes and test
+make test
+make test-integration
+
+# Submit PR
+git push origin feature/amazing-feature
+```
+
+---
+
+## 👥 Community & Support
+
+- **💬 Discord**: [Join our community](https://discord.gg/8KzmtXKAcH)
+- **📧 Email**: cyw@cywang.me
+
+---
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -1069,6 +718,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### 🌟 Star us on GitHub if you find this project useful!
 
+<a href="https://github.com/oso95/Agentainer-lab/stargazers">
+  <img src="https://img.shields.io/github/stars/oso95/Agentainer-lab?style=social" alt="GitHub stars">
+</a>
+
+<br/>
+<br/>
+
 [**Report Bug**](https://github.com/oso95/Agentainer-lab/issues) • [**Request Feature**](https://github.com/oso95/Agentainer-lab/issues) • [**Join Discussion**](https://github.com/oso95/Agentainer-lab/discussions)
+
+<br/>
+
+**Built with ❤️ by the Agentainer Community**
 
 </div>

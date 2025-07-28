@@ -76,9 +76,15 @@ run-redis:
 stop-redis:
 	docker stop agentainer-redis && docker rm agentainer-redis
 
-# Run the server locally
-run: build run-redis
-	./$(BINARY_NAME) server
+# Run the server (containerized for proper networking)
+run: build
+	@echo "$(BLUE)Starting Agentainer server...$(NC)"
+	@./scripts/start-server.sh
+
+# Stop the server
+stop:
+	@echo "$(BLUE)Stopping Agentainer server...$(NC)"
+	@./scripts/stop-server.sh
 
 # Format code
 fmt:
@@ -102,8 +108,15 @@ mod-update:
 	go mod tidy
 
 # Install the binary system-wide (requires sudo)
-install: build
+install-system: build
 	sudo cp $(BINARY_NAME) /usr/local/bin/
+	@echo "$(GREEN)✓ Binary installed to /usr/local/bin/$(NC)"
+	@echo "$(GREEN)✓ Available to all users$(NC)"
+	@echo ""
+	@echo "$(YELLOW)To start the server:$(NC) $(BLUE)make run$(NC)"
+
+# Default install (user directory, recommended)
+install: install-user
 
 # Install the binary for current user (no sudo required)
 install-user: build
@@ -113,10 +126,22 @@ install-user: build
 		cp config.yaml $$HOME/.agentainer/; \
 		sed -i 's|data_dir: ./data|data_dir: ~/.agentainer/data|' $$HOME/.agentainer/config.yaml; \
 	fi
-	@echo "Binary installed to $$HOME/bin/"
-	@echo "Add $$HOME/bin to your PATH if not already done:"
-	@echo "  echo 'export PATH=\"\$$HOME/bin:\$$PATH\"' >> ~/.bashrc"
-	@echo "  source ~/.bashrc"
+	@# Add to PATH if not already there
+	@if ! echo $$PATH | grep -q "$$HOME/bin"; then \
+		if [ -f $$HOME/.bashrc ]; then \
+			echo 'export PATH="$$HOME/bin:$$PATH"' >> $$HOME/.bashrc; \
+			echo "$(GREEN)✓ Added $$HOME/bin to PATH in .bashrc$(NC)"; \
+		fi; \
+		if [ -f $$HOME/.zshrc ]; then \
+			echo 'export PATH="$$HOME/bin:$$PATH"' >> $$HOME/.zshrc; \
+			echo "$(GREEN)✓ Added $$HOME/bin to PATH in .zshrc$(NC)"; \
+		fi; \
+	fi
+	@echo "$(GREEN)✓ Binary installed to $$HOME/bin/$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Installation complete! To start using Agentainer:$(NC)"
+	@echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"
+	@echo "2. Start the server: $(BLUE)make run$(NC)"
 
 # Install prerequisites on fresh VM (requires sudo)
 install-prerequisites:
@@ -126,8 +151,16 @@ install-prerequisites:
 
 # Complete setup for fresh VM (prerequisites + install)
 setup: install-prerequisites install-user
-	@echo "$(GREEN)Complete setup finished!$(NC)"
-	@echo "Run 'source ~/.bashrc' to update PATH"
+	@echo ""
+	@echo "$(GREEN)================================================$(NC)"
+	@echo "$(GREEN)        Complete Setup Finished! 🎉             $(NC)"
+	@echo "$(GREEN)================================================$(NC)"
+	@echo ""
+	@echo "$(YELLOW)To start using Agentainer:$(NC)"
+	@echo "1. Reload your shell: $(BLUE)source ~/.bashrc$(NC)"
+	@echo "2. Start the server: $(BLUE)make run$(NC)"
+	@echo ""
+	@echo "$(GREEN)Enjoy using Agentainer!$(NC)"
 
 # Verify installation
 verify:
@@ -166,9 +199,12 @@ uninstall-user:
 	@echo "Agentainer uninstalled from user directory"
 
 # Uninstall system installation
-uninstall:
+uninstall-system:
 	sudo rm -f /usr/local/bin/$(BINARY_NAME)
-	@echo "Agentainer uninstalled from system"
+	@echo "$(GREEN)✓ Agentainer uninstalled from system$(NC)"
+
+# Default uninstall
+uninstall: uninstall-user
 
 # Show help
 help:
@@ -181,10 +217,10 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Installation:$(NC)"
 	@echo "  $(GREEN)make install-prerequisites$(NC) - Install Git, Go, Docker (fresh VMs)"
-	@echo "  $(GREEN)make install-user$(NC)   - Install binary to ~/bin (recommended)"
-	@echo "  $(GREEN)make install$(NC)        - Install binary to /usr/local/bin (requires sudo)"
-	@echo "  $(GREEN)make uninstall-user$(NC) - Remove user installation"
-	@echo "  $(GREEN)make uninstall$(NC)      - Remove system installation"
+	@echo "  $(GREEN)make install$(NC)        - Install to ~/bin (recommended, no sudo)"
+	@echo "  $(GREEN)make install-system$(NC) - Install to /usr/local/bin (requires sudo)"
+	@echo "  $(GREEN)make uninstall$(NC)      - Remove user installation"
+	@echo "  $(GREEN)make uninstall-system$(NC) - Remove system installation"
 	@echo ""
 	@echo "$(YELLOW)Development:$(NC)"
 	@echo "  $(GREEN)make build$(NC)          - Build the application"
@@ -206,8 +242,9 @@ help:
 	@echo "  $(GREEN)make docker-stop$(NC)    - Stop Docker Compose"
 	@echo "  $(GREEN)make example-build$(NC)  - Build example agent image"
 	@echo ""
-	@echo "$(YELLOW)Local Development:$(NC)"
-	@echo "  $(GREEN)make run$(NC)            - Build and run server locally"
+	@echo "$(YELLOW)Running Agentainer:$(NC)"
+	@echo "  $(GREEN)make run$(NC)            - Start Agentainer server"
+	@echo "  $(GREEN)make stop$(NC)           - Stop Agentainer server"
 	@echo "  $(GREEN)make run-redis$(NC)      - Start Redis container"
 	@echo "  $(GREEN)make stop-redis$(NC)     - Stop Redis container"
 	@echo ""
