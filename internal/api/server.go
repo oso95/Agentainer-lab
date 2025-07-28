@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/mux"
 	"github.com/agentainer/agentainer-lab/internal/agent"
@@ -20,6 +21,7 @@ import (
 	"github.com/agentainer/agentainer-lab/internal/logging"
 	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
+	"github.com/agentainer/agentainer-lab/pkg/docker"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
 )
 
@@ -30,6 +32,8 @@ type Server struct {
 	metricsCollector *metrics.Collector
 	requestMgr       *requests.Manager
 	healthMonitor    *health.Monitor
+	dockerClient     *client.Client
+	networkResolver  *docker.NetworkResolver
 }
 
 type DeployRequest struct {
@@ -51,7 +55,7 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.Storage, metricsCollector *metrics.Collector, redisClient *redis.Client) *Server {
+func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.Storage, metricsCollector *metrics.Collector, redisClient *redis.Client, dockerClient *client.Client) *Server {
 	return &Server{
 		config:           config,
 		agentMgr:         agentMgr,
@@ -59,6 +63,8 @@ func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.
 		metricsCollector: metricsCollector,
 		requestMgr:       requests.NewManager(redisClient),
 		healthMonitor:    health.NewMonitor(agentMgr, redisClient),
+		dockerClient:     dockerClient,
+		networkResolver:  docker.NewNetworkResolver(dockerClient),
 	}
 }
 
@@ -537,12 +543,19 @@ func (s *Server) proxyToAgentHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// In the new architecture, we connect to the agent using its container name
+	// In the new architecture, we connect to the agent using its container
 	// on the internal network. Default agent port is 8000.
 	containerPort := 8000 // Standard agent port
 	
-	// Create target URL using the agent ID as hostname (set in container config)
-	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%d", agentObj.ID, containerPort))
+	// Get the container endpoint using the network resolver
+	endpoint, err := s.networkResolver.GetContainerEndpoint(r.Context(), agentObj.ContainerID, agent.AgentainerNetworkName, containerPort)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve container endpoint: %v", err))
+		return
+	}
+	
+	// Create target URL
+	targetURL, err := url.Parse(endpoint)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "Failed to parse target URL")
 		return

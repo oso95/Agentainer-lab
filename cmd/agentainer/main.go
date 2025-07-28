@@ -317,7 +317,7 @@ func runServer() {
 		"port": cfg.Server.Port,
 	})
 
-	server := api.NewServer(cfg, agentMgr, storage, metricsCollector, redisClient)
+	server := api.NewServer(cfg, agentMgr, storage, metricsCollector, redisClient, dockerClient)
 
 	// Start state synchronizer with more frequent updates
 	stateSynchronizer := sync.NewStateSynchronizer(dockerClient, redisClient, 10*time.Second) // Reduced from 30s to 10s
