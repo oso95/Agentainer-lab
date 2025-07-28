@@ -26,7 +26,9 @@
 
 ## 🎯 What is Agentainer?
 
+
 **Agentainer** is a container runtime specifically designed for LLM agents. Just as Docker revolutionized application deployment, Agentainer makes it dead simple to deploy, manage, and scale AI agents with production-grade reliability.
+
 
 ### The Problem
 🔴 **Building LLM agents is easy. Running them reliably in production is hard.**
@@ -727,9 +729,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 <br/>
 
 [**Report Bug**](https://github.com/oso95/Agentainer-lab/issues) • [**Request Feature**](https://github.com/oso95/Agentainer-lab/issues) • [**Join Discussion**](https://github.com/oso95/Agentainer-lab/discussions)
-
-<br/>
-
-**Built with ❤️ by the Agentainer Community**
 
 </div>
