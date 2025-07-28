@@ -1,7 +1,8 @@
 import os
 import json
 from flask import Flask, request, jsonify
-import requests
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import redis
 from datetime import datetime
@@ -11,9 +12,15 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configuration
-API_KEY = os.environ.get('GEMINI_API_KEY', '')
-MODEL = os.environ.get('GEMINI_MODEL', 'gemini-pro')
+# Configuration - The SDK uses GEMINI_API_KEY env var automatically
+MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
+# Initialize Gemini client
+try:
+    client = genai.Client()
+except Exception as e:
+    print(f"Warning: Failed to initialize Gemini client: {e}")
+    client = None
 
 # Redis connection (Agentainer provides Redis at host.docker.internal:6379)
 REDIS_HOST = os.environ.get('AGENTAINER_REDIS_HOST', 'host.docker.internal')
@@ -62,14 +69,14 @@ def save_conversation(user_msg, assistant_msg):
 @app.route('/health')
 def health():
     return jsonify({
-        'status': 'healthy' if API_KEY else 'unhealthy',
+        'status': 'healthy' if client else 'unhealthy',
         'model': MODEL
     })
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    if not API_KEY:
-        return jsonify({'error': 'GEMINI_API_KEY not configured'}), 500
+    if not client:
+        return jsonify({'error': 'Gemini client not initialized. Check GEMINI_API_KEY'}), 500
     
     data = request.get_json()
     if not data or 'message' not in data:
@@ -77,41 +84,36 @@ def chat():
     
     user_message = data['message']
     
-    # Build conversation parts with history
-    parts = []
+    # Build conversation with history
+    conversation_text = ""
     
     # Add system prompt if provided
     system_prompt = data.get('system_prompt', '')
     if system_prompt:
-        parts.append({'text': f"Instructions: {system_prompt}"})
+        conversation_text += f"Instructions: {system_prompt}\n\n"
     
     # Add recent conversation history for context
     history = get_conversation_history()
     for conv in reversed(history[:3]):  # Last 3 conversations
-        parts.append({'text': f"User: {conv['user']}"})
-        parts.append({'text': f"Assistant: {conv['assistant']}"})
+        conversation_text += f"User: {conv['user']}\n"
+        conversation_text += f"Assistant: {conv['assistant']}\n"
     
     # Add current message
-    parts.append({'text': f"User: {user_message}"})
-    
-    # Build API URL with key
-    API_URL = f'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}'
+    conversation_text += f"User: {user_message}\nAssistant: "
     
     try:
-        response = requests.post(
-            API_URL,
-            headers={'Content-Type': 'application/json'},
-            json={
-                'contents': [{
-                    'parts': parts
-                }]
-            }
+        # Use the official SDK to generate content
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=conversation_text,
+            config=types.GenerateContentConfig(
+                # Optional: disable thinking for faster responses
+                # thinking_config=types.ThinkingConfig(thinking_budget=0)
+            )
         )
-        response.raise_for_status()
-        result = response.json()
         
         # Extract response text
-        assistant_message = result['candidates'][0]['content']['parts'][0]['text']
+        assistant_message = response.text
         
         # Save conversation to Redis
         save_conversation(user_message, assistant_message)

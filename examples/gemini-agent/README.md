@@ -59,7 +59,7 @@ A Google Gemini agent with conversation memory using Redis state management.
 
 Edit `.env` to change:
 - `GEMINI_API_KEY`: Your Google AI API key (required)
-- `GEMINI_MODEL`: Model to use (default: gemini-pro)
+- `GEMINI_MODEL`: Model to use (default: gemini-2.5-flash)
 
 ## How Memory Works
 
