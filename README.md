@@ -18,7 +18,7 @@
 
 ### **Deploy, manage, and scale LLM agents as containerized microservices with built-in resilience**
 
-[**🚀 Quick Start**](#-quick-start) • [**📖 Documentation**](#-documentation) • [**💡 Examples**](#-examples) • [**🔧 CLI Reference**](#-cli-commands) • [**🔌 API**](#-api-reference) • [**🏗️ Architecture**](#-architecture)
+[**🚀 Quick Start**](#-quick-start) • [**📖 Documentation**](#-documentation) • [**💡 Examples**](#-examples) • [**🔧 CLI Reference**](#-quick-reference) • [**🔌 API**](#-api-reference) 
 
 </div>
 
@@ -28,23 +28,6 @@
 
 
 **Agentainer** is a container runtime specifically designed for LLM agents. Just as Docker revolutionized application deployment, Agentainer makes it dead simple to deploy, manage, and scale AI agents with production-grade reliability.
-
-
-### The Problem
-🔴 **Building LLM agents is easy. Running them reliably in production is hard.**
-- Agents crash unexpectedly
-- Lost requests during downtime
-- Complex state management
-- No standard deployment patterns
-- Manual orchestration overhead
-
-### The Solution
-✅ **Agentainer provides the missing infrastructure layer:**
-- **One command deployment**: `agentainer deploy --name my-agent --image ./Dockerfile`
-- **Automatic crash recovery** with request replay
-- **Built-in state persistence** via Redis
-- **Network isolation** with unified proxy access
-- **Production patterns** out of the box
 
 ---
 
@@ -143,61 +126,6 @@ Agentainer provides a complete infrastructure layer between your agent code and 
 
 ---
 
----
-
-## 📸 Perfect For
-
-<table>
-<tr>
-<td width="33%">
-
-**💬 Customer Support Bots**
-
-Stateful agents that remember conversation history and customer context across sessions.
-
-</td>
-<td width="33%">
-
-**🔄 Data Processing Pipelines**
-
-Multi-agent workflows with automatic retries and state checkpointing.
-
-</td>
-<td width="33%">
-
-**🤖 Personal Assistants**
-
-Long-running agents that handle tasks asynchronously without losing progress.
-
-</td>
-</tr>
-<tr>
-<td width="33%">
-
-**📋 Research Agents**
-
-Agents that collect data over time and need persistent storage.
-
-</td>
-<td width="33%">
-
-**🎯 API Gateways**
-
-Intelligent routers that adapt based on traffic patterns and errors.
-
-</td>
-<td width="33%">
-
-**📊 Analytics Agents**
-
-Agents that process metrics and maintain rolling aggregations.
-
-</td>
-</tr>
-</table>
-
----
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -219,19 +147,6 @@ make setup    # Installs everything including prerequisites
 make run
 ```
 
-### Your First Agent (< 30 seconds)
-
-```bash
-# 1. Deploy a simple agent
-agentainer deploy --name hello-world --image nginx:latest
-
-# 2. Start it
-agentainer start <agent-id>
-
-# 3. Access it (no auth needed for proxy)
-curl http://localhost:8081/agent/hello-world/
-```
-
 ### Deploy an LLM Agent (< 1 minute)
 
 ```bash
@@ -245,14 +160,14 @@ cp .env.example .env
 docker build -t gpt-bot-image .
 agentainer deploy --name gpt-bot --image gpt-bot-image
 
-# For Linux users: Direct Dockerfile deployment works
+# For Linux users: Direct Dockerfile deployment works, or, build the image first, then deploy
 # agentainer deploy --name gpt-bot --image ./Dockerfile
 
 # 3. Start and test
 agentainer start <agent-id>
 
 # 4. Chat with your agent
-curl -X POST http://localhost:8081/agent/gpt-bot/chat \
+curl -X POST http://localhost:8081/agent/<agent-id>/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello! What is Agentainer?"}'
 ```
