@@ -317,6 +317,7 @@ func runServer() {
 		"version": "1.0",
 		"host": cfg.Server.Host,
 		"port": cfg.Server.Port,
+		"dashboard_enabled": cfg.Dashboard.Enabled,
 	})
 
 	server := api.NewServer(cfg, agentMgr, storage, metricsCollector, redisClient, dockerClient)
@@ -345,6 +346,11 @@ func runServer() {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
+
+	// Dashboard is now integrated into the main API server at /dashboard
+	if cfg.Dashboard.Enabled {
+		log.Printf("Agentainer Flow Dashboard available at http://%s:%d/dashboard", cfg.Server.Host, cfg.Server.Port)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

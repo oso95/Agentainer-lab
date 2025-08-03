@@ -1,0 +1,240 @@
+{{template "base" .}}
+
+{{define "styles"}}
+<style>
+.step-container {
+    margin: 1rem 0;
+    padding: 1rem;
+    border-left: 4px solid #ecf0f1;
+}
+
+.step-running {
+    border-left-color: #3498db;
+    background-color: #ebf5fb;
+}
+
+.step-completed {
+    border-left-color: #27ae60;
+    background-color: #eafaf1;
+}
+
+.step-failed {
+    border-left-color: #e74c3c;
+    background-color: #fdedec;
+}
+
+.step-pending {
+    border-left-color: #95a5a6;
+}
+
+.step-details {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: #666;
+}
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.metric-card {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 4px;
+}
+</style>
+{{end}}
+
+{{define "content"}}
+<h2>Workflow: {{.Workflow.Name}}</h2>
+
+<div class="card">
+    <h3>Overview</h3>
+    <p><strong>ID:</strong> {{.Workflow.ID}}</p>
+    <p><strong>Status:</strong> <span class="status-badge status-{{.Workflow.Status}}">{{.Workflow.Status}}</span></p>
+    <p><strong>Created:</strong> {{.Workflow.CreatedAt.Format "2006-01-02 15:04:05"}}</p>
+    <p><strong>Updated:</strong> {{.Workflow.UpdatedAt.Format "2006-01-02 15:04:05"}}</p>
+    {{if .Workflow.Description}}
+    <p><strong>Description:</strong> {{.Workflow.Description}}</p>
+    {{end}}
+</div>
+
+<div class="card">
+    <h3>Configuration</h3>
+    <p><strong>Max Parallel:</strong> {{.Workflow.Config.MaxParallel}}</p>
+    <p><strong>Timeout:</strong> {{.Workflow.Config.Timeout}}</p>
+    <p><strong>Failure Strategy:</strong> {{.Workflow.Config.FailureStrategy}}</p>
+    {{if .Workflow.Config.Schedule}}
+    <p><strong>Schedule:</strong> {{.Workflow.Config.Schedule}}</p>
+    {{end}}
+</div>
+
+<div class="card">
+    <h3>Steps</h3>
+    {{range .Workflow.Steps}}
+    <div class="step-container step-{{.Status}}">
+        <h4>{{.Name}} <span class="status-badge status-{{.Status}}">{{.Status}}</span></h4>
+        <div class="step-details">
+            <p><strong>Type:</strong> {{.Type}} | <strong>ID:</strong> {{.ID}}</p>
+            {{if .Config.Image}}
+            <p><strong>Image:</strong> {{.Config.Image}}</p>
+            {{end}}
+            {{if .StartedAt}}
+            <p><strong>Started:</strong> {{.StartedAt.Format "15:04:05"}}</p>
+            {{end}}
+            {{if .CompletedAt}}
+            <p><strong>Completed:</strong> {{.CompletedAt.Format "15:04:05"}}</p>
+            {{end}}
+            {{if .Error}}
+            <p style="color: #e74c3c;"><strong>Error:</strong> {{.Error}}</p>
+            {{end}}
+            {{if .DependsOn}}
+            <p><strong>Depends On:</strong> {{range $i, $dep := .DependsOn}}{{if $i}}, {{end}}{{$dep}}{{end}}</p>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+</div>
+
+{{if .Metrics}}
+<div class="card">
+    <h3>Metrics</h3>
+    <div class="metrics-grid">
+        <div class="metric-card">
+            <div class="metric-label">Total Steps</div>
+            <div class="metric-value">{{.Metrics.TotalSteps}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Completed Steps</div>
+            <div class="metric-value">{{.Metrics.CompletedSteps}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Failed Steps</div>
+            <div class="metric-value">{{.Metrics.FailedSteps}}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Duration</div>
+            <div class="metric-value">{{.Metrics.Duration}}</div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+<div class="card">
+    <h3>Actions</h3>
+    <button onclick="refreshWorkflow()">Refresh</button>
+    {{if eq .Workflow.Status "running"}}
+    <button onclick="stopWorkflow()" style="background-color: #e74c3c; color: white;">Stop Workflow</button>
+    {{end}}
+    {{if eq .Workflow.Status "failed"}}
+    <button onclick="retryWorkflow()" style="background-color: #3498db; color: white;">Retry Workflow</button>
+    {{end}}
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const workflowID = '{{.Workflow.ID}}';
+
+function refreshWorkflow() {
+    window.location.reload();
+}
+
+async function stopWorkflow() {
+    if (!confirm('Are you sure you want to stop this workflow?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/workflow/${workflowID}/stop`, {
+            method: 'POST'
+        });
+        if (response.ok) {
+            alert('Workflow stop requested');
+            setTimeout(refreshWorkflow, 1000);
+        } else {
+            alert('Failed to stop workflow');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+async function retryWorkflow() {
+    if (!confirm('Are you sure you want to retry this workflow?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/workflow/${workflowID}/retry`, {
+            method: 'POST'
+        });
+        if (response.ok) {
+            alert('Workflow retry initiated');
+            setTimeout(refreshWorkflow, 1000);
+        } else {
+            alert('Failed to retry workflow');
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// WebSocket connection for real-time updates
+let ws;
+let reconnectInterval;
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/dashboard/ws`;
+    
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = function() {
+        console.log('WebSocket connected');
+        clearInterval(reconnectInterval);
+    };
+    
+    ws.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        if (data.type === 'workflow_update' && data.workflow_id === workflowID) {
+            console.log('Workflow update received, refreshing...');
+            refreshWorkflow();
+        }
+    };
+    
+    ws.onerror = function(error) {
+        console.error('WebSocket error:', error);
+    };
+    
+    ws.onclose = function() {
+        console.log('WebSocket disconnected');
+        // Reconnect after 3 seconds
+        reconnectInterval = setTimeout(connectWebSocket, 3000);
+    };
+}
+
+// Connect WebSocket on page load
+connectWebSocket();
+
+// Auto-refresh if workflow is running (as fallback)
+{{if eq .Workflow.Status "running"}}
+setInterval(function() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        refreshWorkflow();
+    }
+}, 5000);
+{{end}}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (ws) {
+        ws.close();
+    }
+    clearInterval(reconnectInterval);
+});
+</script>
+{{end}}

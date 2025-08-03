@@ -17,10 +17,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/agentainer/agentainer-lab/internal/agent"
 	"github.com/agentainer/agentainer-lab/internal/config"
+	"github.com/agentainer/agentainer-lab/internal/dashboard"
 	"github.com/agentainer/agentainer-lab/internal/health"
 	"github.com/agentainer/agentainer-lab/internal/logging"
 	"github.com/agentainer/agentainer-lab/internal/requests"
 	"github.com/agentainer/agentainer-lab/internal/storage"
+	"github.com/agentainer/agentainer-lab/internal/workflow"
 	"github.com/agentainer/agentainer-lab/pkg/metrics"
 )
 
@@ -32,6 +34,12 @@ type Server struct {
 	requestMgr       *requests.Manager
 	healthMonitor    *health.Monitor
 	dockerClient     *client.Client
+	workflowMgr      *workflow.Manager
+	orchestrator     *workflow.Orchestrator
+	stateManager     *workflow.StateManager
+	scheduler        *workflow.Scheduler
+	workflowMetrics  *workflow.MetricsCollector
+	dashboardServer  *dashboard.DashboardServer
 }
 
 type DeployRequest struct {
@@ -54,6 +62,15 @@ type Response struct {
 }
 
 func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.Storage, metricsCollector *metrics.Collector, redisClient *redis.Client, dockerClient *client.Client) *Server {
+	workflowMgr := workflow.NewManager(redisClient)
+	stateManager := workflow.NewStateManager(redisClient)
+	workflowMetrics := workflow.NewMetricsCollector(redisClient)
+	orchestrator := workflow.NewOrchestratorWithMetrics(workflowMgr, agentMgr, redisClient, workflowMetrics)
+	scheduler := workflow.NewScheduler(workflowMgr, orchestrator, redisClient)
+	
+	// Create dashboard server (address not needed when integrated)
+	dashboardServer, _ := dashboard.NewDashboardServer("", redisClient, agentMgr)
+	
 	return &Server{
 		config:           config,
 		agentMgr:         agentMgr,
@@ -62,6 +79,12 @@ func NewServer(config *config.Config, agentMgr *agent.Manager, storage *storage.
 		requestMgr:       requests.NewManager(redisClient),
 		healthMonitor:    health.NewMonitor(agentMgr, redisClient),
 		dockerClient:     dockerClient,
+		workflowMgr:      workflowMgr,
+		orchestrator:     orchestrator,
+		stateManager:     stateManager,
+		scheduler:        scheduler,
+		workflowMetrics:  workflowMetrics,
+		dashboardServer:  dashboardServer,
 	}
 }
 
@@ -105,6 +128,47 @@ func (s *Server) Start() error {
 	
 	// Metrics endpoints
 	api.HandleFunc("/agents/{id}/metrics/history", s.getMetricsHistoryHandler).Methods("GET")
+	
+	// Workflow endpoints
+	api.HandleFunc("/workflows", s.createWorkflowHandler).Methods("POST")
+	api.HandleFunc("/workflows", s.listWorkflowsHandler).Methods("GET")
+	api.HandleFunc("/workflows/{id}", s.getWorkflowHandler).Methods("GET")
+	api.HandleFunc("/workflows/{id}/jobs", s.getWorkflowJobsHandler).Methods("GET")
+	api.HandleFunc("/workflows/{id}/start", s.startWorkflowHandler).Methods("POST")
+	api.HandleFunc("/workflows/{id}/state", s.getWorkflowStateHandler).Methods("GET")
+	api.HandleFunc("/workflows/{id}/state", s.updateWorkflowStateHandler).Methods("PUT")
+	api.HandleFunc("/workflows/{id}/steps", s.addWorkflowStepHandler).Methods("POST")
+	
+	// Workflow pattern endpoints
+	api.HandleFunc("/workflows/mapreduce", s.createMapReduceHandler).Methods("POST")
+	
+	// Workflow trigger endpoints
+	api.HandleFunc("/workflows/{id}/triggers", s.createWorkflowTriggerHandler).Methods("POST")
+	api.HandleFunc("/workflows/{id}/triggers", s.listWorkflowTriggersHandler).Methods("GET")
+	api.HandleFunc("/workflows/{id}/trigger", s.executeTriggerHandler).Methods("POST")
+	api.HandleFunc("/triggers/{triggerId}/enable", s.enableTriggerHandler).Methods("PUT")
+	api.HandleFunc("/triggers/{triggerId}/disable", s.disableTriggerHandler).Methods("PUT")
+	
+	// Workflow metrics endpoints
+	api.HandleFunc("/workflows/{id}/metrics", s.getWorkflowMetricsHandler).Methods("GET")
+	api.HandleFunc("/workflows/metrics/history", s.getWorkflowHistoryHandler).Methods("GET")
+	api.HandleFunc("/workflows/metrics/aggregate", s.getAggregateMetricsHandler).Methods("GET")
+
+	// Mount dashboard under /dashboard prefix (no auth required for dashboard)
+	if s.dashboardServer != nil && s.config.Dashboard.Enabled {
+		dashboardRouter := s.dashboardServer.GetRouter()
+		r.PathPrefix("/dashboard/").Handler(http.StripPrefix("/dashboard", dashboardRouter))
+		
+		// Redirect /dashboard to /dashboard/
+		r.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/", http.StatusMovedPermanently)
+		})
+		
+		// Start dashboard services
+		if err := s.dashboardServer.Start(); err != nil {
+			return fmt.Errorf("failed to start dashboard services: %w", err)
+		}
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	
@@ -131,6 +195,13 @@ func (s *Server) Start() error {
 	go func() {
 		if err := s.metricsCollector.Start(context.Background()); err != nil {
 			fmt.Printf("Failed to start metrics collector: %v\n", err)
+		}
+	}()
+	
+	// Start workflow scheduler
+	go func() {
+		if err := s.scheduler.Start(context.Background()); err != nil {
+			fmt.Printf("Failed to start workflow scheduler: %v\n", err)
 		}
 	}()
 	

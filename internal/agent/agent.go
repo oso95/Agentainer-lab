@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -54,6 +55,13 @@ type Agent struct {
 	Ports        []PortMapping     `json:"ports"`
 	Volumes      []VolumeMapping   `json:"volumes"`
 	HealthCheck  *HealthCheckConfig `json:"health_check,omitempty"`
+	
+	// Workflow metadata for orchestration
+	WorkflowID   string            `json:"workflow_id,omitempty"`
+	StepID       string            `json:"step_id,omitempty"`
+	TaskID       string            `json:"task_id,omitempty"`  // For parallel tasks within a step
+	WorkflowMeta map[string]string `json:"workflow_meta,omitempty"` // Additional workflow metadata
+	
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
@@ -102,6 +110,11 @@ func NewManager(dockerClient *client.Client, redisClient *redis.Client, configPa
 }
 
 func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping, healthCheck *HealthCheckConfig) (*Agent, error) {
+	return m.DeployWithWorkflow(ctx, name, image, envVars, cpuLimit, memoryLimit, autoRestart, token, ports, volumes, healthCheck, "", "", "", nil)
+}
+
+// DeployWithWorkflow creates an agent with workflow metadata support
+func (m *Manager) DeployWithWorkflow(ctx context.Context, name, image string, envVars map[string]string, cpuLimit, memoryLimit int64, autoRestart bool, token string, ports []PortMapping, volumes []VolumeMapping, healthCheck *HealthCheckConfig, workflowID, stepID, taskID string, workflowMeta map[string]string) (*Agent, error) {
 	// Validate that the Docker image exists
 	_, _, err := m.dockerClient.ImageInspectWithRaw(ctx, image)
 	if err != nil {
@@ -130,6 +143,10 @@ func (m *Manager) Deploy(ctx context.Context, name, image string, envVars map[st
 		Ports:       []PortMapping{}, // No longer exposing ports
 		Volumes:     volumes,
 		HealthCheck: healthCheck,
+		WorkflowID:  workflowID,
+		StepID:      stepID,
+		TaskID:      taskID,
+		WorkflowMeta: workflowMeta,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -432,6 +449,26 @@ func (m *Manager) createContainer(ctx context.Context, agent *Agent) (string, er
 	env := make([]string, 0, len(agent.EnvVars))
 	for key, value := range agent.EnvVars {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+	
+	// Add workflow environment variables if this is a workflow agent
+	if agent.WorkflowID != "" {
+		env = append(env, fmt.Sprintf("WORKFLOW_ID=%s", agent.WorkflowID))
+		log.Printf("Added WORKFLOW_ID=%s to agent environment", agent.WorkflowID)
+	}
+	if agent.StepID != "" {
+		env = append(env, fmt.Sprintf("STEP_ID=%s", agent.StepID))
+	}
+	if agent.TaskID != "" {
+		env = append(env, fmt.Sprintf("TASK_ID=%s", agent.TaskID))
+	}
+	if agent.ID != "" {
+		env = append(env, fmt.Sprintf("AGENT_ID=%s", agent.ID))
+	}
+	
+	// Add any additional workflow metadata
+	for key, value := range agent.WorkflowMeta {
+		env = append(env, fmt.Sprintf("WORKFLOW_%s=%s", strings.ToUpper(key), value))
 	}
 
 	// No port bindings in the new architecture

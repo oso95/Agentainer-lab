@@ -10,17 +10,24 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Storage  StorageConfig  `mapstructure:"storage"`
-	Docker   DockerConfig   `mapstructure:"docker"`
-	Security SecurityConfig `mapstructure:"security"`
-	Features FeaturesConfig `mapstructure:"features"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Dashboard DashboardConfig `mapstructure:"dashboard"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Storage   StorageConfig   `mapstructure:"storage"`
+	Docker    DockerConfig    `mapstructure:"docker"`
+	Security  SecurityConfig  `mapstructure:"security"`
+	Features  FeaturesConfig  `mapstructure:"features"`
 }
 
 type ServerConfig struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+}
+
+type DashboardConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Host    string `mapstructure:"host"`
+	Port    int    `mapstructure:"port"`
 }
 
 type RedisConfig struct {
@@ -57,6 +64,9 @@ func LoadConfig() (*Config, error) {
 
 	viper.SetDefault("server.host", "localhost")
 	viper.SetDefault("server.port", 8081)
+	viper.SetDefault("dashboard.enabled", true)
+	viper.SetDefault("dashboard.host", "localhost")
+	viper.SetDefault("dashboard.port", 8080)
 	viper.SetDefault("redis.host", "localhost")
 	viper.SetDefault("redis.port", 6379)
 	viper.SetDefault("redis.password", "")

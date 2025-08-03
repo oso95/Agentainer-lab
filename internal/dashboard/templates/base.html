@@ -1,0 +1,223 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - Agentainer Flow</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .nav {
+            background-color: #34495e;
+            padding: 0.5rem 2rem;
+        }
+        
+        .nav a {
+            color: #ecf0f1;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+        
+        .nav a:hover {
+            background-color: #2c3e50;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .metric {
+            display: inline-block;
+            margin: 1rem;
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #3498db;
+        }
+        
+        .metric-label {
+            font-size: 0.9rem;
+            color: #7f8c8d;
+            text-transform: uppercase;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .status-running {
+            background-color: #3498db;
+            color: white;
+        }
+        
+        .status-completed {
+            background-color: #27ae60;
+            color: white;
+        }
+        
+        .status-failed {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .status-pending {
+            background-color: #95a5a6;
+            color: white;
+        }
+        
+        .status-stopped {
+            background-color: #7f8c8d;
+            color: white;
+        }
+        
+        .status-starting {
+            background-color: #f39c12;
+            color: white;
+        }
+        
+        .status-created {
+            background-color: #9b59b6;
+            color: white;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .connection-status {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+        
+        .connected {
+            background-color: #27ae60;
+            color: white;
+        }
+        
+        .disconnected {
+            background-color: #e74c3c;
+            color: white;
+        }
+    </style>
+    {{block "styles" .}}{{end}}
+</head>
+<body>
+    <div class="header">
+        <h1>Agentainer Flow Dashboard</h1>
+    </div>
+    
+    <nav class="nav">
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/dashboard/workflows">Workflows</a>
+        <a href="/dashboard/metrics">Metrics</a>
+        <a href="/dashboard/agents">Agents</a>
+    </nav>
+    
+    <div class="container">
+        {{block "content" .}}{{end}}
+    </div>
+    
+    <div id="connection-status" class="connection-status disconnected">
+        Disconnected
+    </div>
+    
+    <script>
+        // WebSocket connection
+        let ws;
+        let reconnectInterval;
+        
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/dashboard/ws`);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+                document.getElementById('connection-status').className = 'connection-status connected';
+                document.getElementById('connection-status').textContent = 'Connected';
+                clearInterval(reconnectInterval);
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                document.getElementById('connection-status').className = 'connection-status disconnected';
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                
+                // Reconnect after 3 seconds
+                reconnectInterval = setInterval(connectWebSocket, 3000);
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'metrics_update') {
+                    updateMetrics(data.data);
+                }
+            };
+        }
+        
+        function updateMetrics(data) {
+            // Update metrics on the page
+            if (window.updatePageMetrics) {
+                window.updatePageMetrics(data);
+            }
+        }
+        
+        // Connect on page load
+        window.addEventListener('load', connectWebSocket);
+    </script>
+    {{block "scripts" .}}{{end}}
+</body>
+</html>
+{{end}}

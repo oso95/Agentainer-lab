@@ -1,0 +1,62 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h2>Workflows</h2>
+
+<div class="card">
+    <div style="margin-bottom: 1rem;">
+        <label for="status-filter">Filter by status: </label>
+        <select id="status-filter" onchange="filterWorkflows()">
+            <option value="">All</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="pending">Pending</option>
+        </select>
+    </div>
+    
+    <table id="workflows-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Updated</th>
+                <th>Steps</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Workflows}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td><span class="status-badge status-{{.Status}}">{{.Status}}</span></td>
+                <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                <td>{{.UpdatedAt.Format "2006-01-02 15:04:05"}}</td>
+                <td>{{len .Steps}}</td>
+                <td>
+                    <a href="/dashboard/workflow/{{.ID}}">View</a> |
+                    <a href="/dashboard/api/workflow/{{.ID}}" target="_blank">JSON</a>
+                </td>
+            </tr>
+            {{else}}
+            <tr>
+                <td colspan="7" style="text-align: center;">No workflows found</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+async function filterWorkflows() {
+    const status = document.getElementById('status-filter').value;
+    const url = status ? `/workflows?status=${status}` : '/workflows';
+    window.location.href = url;
+}
+</script>
+{{end}}

@@ -8,9 +8,11 @@ RUN go mod download
 COPY . .
 RUN go build -o agentainer ./cmd/agentainer
 
-FROM alpine:latest
+FROM alpine:3.22
 
-RUN apk --no-cache add ca-certificates
+RUN apk update && \
+    apk upgrade && \
+    apk --no-cache add ca-certificates
 WORKDIR /root/
 
 COPY --from=builder /app/agentainer .

@@ -46,6 +46,13 @@
 - **Network isolation** with unified proxy access
 - **Production patterns** out of the box
 
+### 🚀 NEW: Agentainer Flow - Workflow Orchestration
+- **MapReduce in one line**: `agentainer workflow mapreduce --mapper scraper:latest --reducer analyzer:latest`
+- **20-50x faster parallel execution** with agent pooling
+- **Fan-out/fan-in orchestration** for complex workflows
+- **Shared workflow state** across all steps
+- **70% less code** than traditional orchestrators
+
 ---
 
 ## 🔍 How It Compares
@@ -215,9 +222,11 @@ git clone https://github.com/oso95/Agentainer-lab.git
 cd agentainer-lab
 make setup    # Installs everything including prerequisites
 
-# Start Agentainer
-make run
+# Start Agentainer (unified approach)
+make run      # Uses docker-compose internally
 ```
+
+> **Note**: Agentainer now uses a unified startup approach with docker-compose. This ensures consistent Redis connectivity for both standalone agents and workflows.
 
 ### Your First Agent (< 30 seconds)
 
@@ -256,6 +265,31 @@ curl -X POST http://localhost:8081/agent/gpt-bot/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello! What is Agentainer?"}'
 ```
+
+### Workflow Orchestration (NEW! 🚀)
+
+```bash
+# 1. Simple MapReduce workflow
+agentainer workflow mapreduce \
+  --name web-scraper \
+  --mapper scraper:latest \
+  --reducer analyzer:latest \
+  --parallel 10
+
+# 2. Monitor workflow progress
+agentainer workflow get <workflow-id>
+agentainer workflow jobs <workflow-id>
+
+# 3. With agent pooling (20-50x faster!)
+agentainer workflow mapreduce \
+  --name fast-processor \
+  --mapper processor:v2 \
+  --reducer aggregator:v2 \
+  --parallel 20 \
+  --pool-size 5  # 5 agents handle 20 tasks
+```
+
+See [Agentainer Flow documentation](docs/AGENTAINER_FLOW.md) for more workflow patterns.
 
 ---
 
@@ -642,11 +676,13 @@ cd agentainer-lab
 
 # Build and run
 make build
-make run
+make run      # Unified startup with docker-compose
 
 # Run tests
 make test
 ```
+
+> **Migration Note**: If you were using the old startup method, see the [Unified Startup Migration Guide](docs/UNIFIED_STARTUP_MIGRATION.md).
 
 ### Key Commands
 

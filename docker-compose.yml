@@ -13,6 +13,7 @@ services:
     restart: unless-stopped
     networks:
       - agentainer-internal
+      - agentainer-network
 
   agentainer:
     build: .
@@ -30,7 +31,10 @@ services:
       - AGENTAINER_REDIS_PORT=6379
       - AGENTAINER_DOCKER_HOST=unix:///var/run/docker.sock
       - AGENTAINER_STORAGE_DATA_DIR=/app/data
+      - AGENTAINER_DOCKER_NETWORK=agentainer-network
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - agentainer-internal
       - agentainer-network

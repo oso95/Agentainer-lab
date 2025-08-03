@@ -1,0 +1,127 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h2>System Overview</h2>
+
+<div class="card">
+    <h3>Real-time Metrics</h3>
+    <div id="metrics-container">
+        <div class="metric">
+            <div class="metric-value" id="running-count">0</div>
+            <div class="metric-label">Running Workflows</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="completed-count">0</div>
+            <div class="metric-label">Completed</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="failed-count">0</div>
+            <div class="metric-label">Failed</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value" id="total-count">0</div>
+            <div class="metric-label">Total Workflows</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Recent Workflows</h3>
+    <table id="recent-workflows">
+        <thead>
+            <tr>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Duration</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td colspan="5" style="text-align: center; padding: 2rem;">Loading...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3>System Health</h3>
+    <div id="system-health">
+        <p>Current Time: {{.Time}}</p>
+        <p>Active Agents: <span id="active-agents">0</span></p>
+        <p>Pool Utilization: <span id="pool-utilization">0%</span></p>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+window.updatePageMetrics = function(data) {
+    // Update workflow counts
+    if (data.workflows) {
+        document.getElementById('running-count').textContent = data.workflows.running || 0;
+        document.getElementById('completed-count').textContent = data.workflows.completed || 0;
+        document.getElementById('failed-count').textContent = data.workflows.failed || 0;
+        document.getElementById('total-count').textContent = data.workflows.total || 0;
+    }
+    
+    // Update other metrics as needed
+    if (data.aggregates && data.aggregates.active_agents !== undefined) {
+        document.getElementById('active-agents').textContent = data.aggregates.active_agents;
+    }
+    
+    if (data.aggregates && data.aggregates.pool_utilization !== undefined) {
+        document.getElementById('pool-utilization').textContent = 
+            Math.round(data.aggregates.pool_utilization * 100) + '%';
+    }
+};
+
+// Fetch recent workflows
+async function fetchRecentWorkflows() {
+    try {
+        const response = await fetch('/dashboard/api/workflows?limit=10');
+        const workflows = await response.json();
+        updateWorkflowsTable(workflows);
+    } catch (error) {
+        console.error('Failed to fetch workflows:', error);
+    }
+}
+
+function updateWorkflowsTable(workflows) {
+    const tbody = document.querySelector('#recent-workflows tbody');
+    if (!workflows || workflows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No workflows found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = workflows.map(wf => `
+        <tr>
+            <td><a href="/dashboard/workflow/${wf.id}">${wf.name}</a></td>
+            <td><span class="status-badge status-${wf.status.toLowerCase()}">${wf.status}</span></td>
+            <td>${new Date(wf.created_at).toLocaleString()}</td>
+            <td>${calculateDuration(wf.created_at, wf.updated_at)}</td>
+            <td><a href="/dashboard/workflow/${wf.id}">View</a></td>
+        </tr>
+    `).join('');
+}
+
+function calculateDuration(start, end) {
+    const startTime = new Date(start);
+    const endTime = new Date(end);
+    const duration = (endTime - startTime) / 1000; // seconds
+    
+    if (duration < 60) {
+        return Math.round(duration) + 's';
+    } else if (duration < 3600) {
+        return Math.round(duration / 60) + 'm';
+    } else {
+        return Math.round(duration / 3600) + 'h';
+    }
+}
+
+// Load initial data
+fetchRecentWorkflows();
+setInterval(fetchRecentWorkflows, 5000); // Refresh every 5 seconds
+</script>
+{{end}}

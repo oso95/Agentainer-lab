@@ -1,0 +1,14 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install required packages
+RUN pip install requests redis
+
+# Copy the mapper script
+COPY mapper.py .
+
+# Set environment for the workflow
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "mapper.py"]

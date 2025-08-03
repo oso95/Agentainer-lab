@@ -19,7 +19,7 @@ BLUE := \033[0;34m
 NC := \033[0m # No Color
 
 .PHONY: all build clean test docker-build docker-run example-build run-redis stop-redis help \
-        install install-user uninstall uninstall-user verify setup install-prerequisites \
+        install install-user install-sdk uninstall uninstall-user verify setup install-prerequisites \
         test-network test-persistence test-crash test-all
 
 # Default target
@@ -65,13 +65,11 @@ clean:
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
 
-# Run with Docker Compose
-docker-run:
-	docker-compose up -d
+# Run with Docker Compose (alias for 'run')
+docker-run: run
 
-# Stop Docker Compose
-docker-stop:
-	docker-compose down
+# Stop Docker Compose (alias for 'stop')
+docker-stop: stop
 
 # Build example agent image
 example-build:
@@ -85,15 +83,28 @@ run-redis:
 stop-redis:
 	docker stop agentainer-redis && docker rm agentainer-redis
 
-# Run the server (containerized for proper networking)
-run: build
-	@echo "$(BLUE)Starting Agentainer server...$(NC)"
-	@./scripts/start-server.sh
+# Run the server using unified startup script
+run: docker-build
+	@chmod +x scripts/unified-start.sh
+	@./scripts/unified-start.sh
 
 # Stop the server
 stop:
 	@echo "$(BLUE)Stopping Agentainer server...$(NC)"
-	@./scripts/stop-server.sh
+	@docker compose down || docker-compose down || true
+	@# Also clean up any standalone containers
+	@docker stop agentainer-server agentainer-redis 2>/dev/null || true
+	@docker rm agentainer-server agentainer-redis 2>/dev/null || true
+	@echo "$(GREEN)✅ Agentainer stopped$(NC)"
+
+stop-all: stop
+	@echo "$(BLUE)Removing agentainer-network...$(NC)"
+	@# Disconnect all containers from the network first
+	@for container in $$(docker ps -a --filter "network=agentainer-network" --format "{{.ID}}"); do \
+		docker network disconnect agentainer-network "$$container" 2>/dev/null || true; \
+	done
+	@docker network rm agentainer-network 2>/dev/null || true
+	@echo "$(GREEN)✅ All Agentainer resources cleaned up$(NC)"
 
 # Format code
 fmt:
@@ -124,8 +135,14 @@ install-system: build
 	@echo ""
 	@echo "$(YELLOW)To start the server:$(NC) $(BLUE)make run$(NC)"
 
+# Install Python SDK
+install-sdk:
+	@echo "$(BLUE)Installing Agentainer Flow Python SDK...$(NC)"
+	@cd sdk/python && python3 -m pip install -e .
+	@echo "$(GREEN)✓ Agentainer Flow SDK installed$(NC)"
+
 # Default install (user directory, recommended)
-install: install-user
+install: install-user install-sdk
 
 # Install the binary for current user (no sudo required)
 install-user: build
@@ -167,7 +184,7 @@ install-prerequisites:
 	@./scripts/install-prerequisites.sh
 
 # Complete setup for fresh VM (prerequisites + install)
-setup: install-prerequisites install-user
+setup: install-prerequisites install-user install-sdk
 	@echo ""
 	@echo "$(GREEN)================================================$(NC)"
 	@echo "$(GREEN)        Complete Setup Finished! 🎉             $(NC)"
@@ -238,7 +255,8 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Installation:$(NC)"
 	@echo "  $(GREEN)make install-prerequisites$(NC) - Install Git, Go, Docker (fresh VMs)"
-	@echo "  $(GREEN)make install$(NC)        - Install to ~/bin (recommended, no sudo)"
+	@echo "  $(GREEN)make install$(NC)        - Install to ~/bin + SDK (recommended)"
+	@echo "  $(GREEN)make install-sdk$(NC)    - Install Python SDK only"
 	@echo "  $(GREEN)make install-system$(NC) - Install to /usr/local/bin (requires sudo)"
 	@echo "  $(GREEN)make uninstall$(NC)      - Remove user installation"
 	@echo "  $(GREEN)make uninstall-system$(NC) - Remove system installation"

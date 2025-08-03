@@ -1,0 +1,175 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h2>Agents</h2>
+
+<div class="card">
+    <h3>Agent Pools</h3>
+    <div id="pools-container">
+        <p>Loading agent pool information...</p>
+    </div>
+</div>
+
+<div class="card">
+    <h3>All Agents</h3>
+    <table id="agents-table">
+        <thead>
+            <tr>
+                <th>Agent ID</th>
+                <th>Image</th>
+                <th>Status</th>
+                <th>Workflow</th>
+                <th>Step</th>
+                <th>Started</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td colspan="7" style="text-align: center;">Loading active agents...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+async function loadAgentPools() {
+    try {
+        const response = await fetch('/dashboard/api/agent-pools');
+        const pools = await response.json();
+        displayPools(pools);
+    } catch (error) {
+        console.error('Failed to load agent pools:', error);
+        document.getElementById('pools-container').innerHTML = 
+            '<p style="color: #e74c3c;">Failed to load agent pool information</p>';
+    }
+}
+
+async function loadActiveAgents() {
+    try {
+        const response = await fetch('/dashboard/api/agents/active');
+        const agents = await response.json();
+        displayAgents(agents);
+    } catch (error) {
+        console.error('Failed to load active agents:', error);
+    }
+}
+
+function displayPools(pools) {
+    const container = document.getElementById('pools-container');
+    if (!pools || pools.length === 0) {
+        container.innerHTML = '<p>No agent pools configured</p>';
+        return;
+    }
+    
+    container.innerHTML = pools.map(pool => `
+        <div class="metric-card" style="margin-bottom: 1rem;">
+            <h4>${pool.image}</h4>
+            <p>Min Size: ${pool.config.min_size} | Max Size: ${pool.config.max_size}</p>
+            <p>Active: ${pool.stats.active_agents} | Total: ${pool.stats.total_agents}</p>
+            <p>Total Uses: ${pool.stats.total_uses} | Utilization: ${Math.round(pool.stats.utilization * 100)}%</p>
+        </div>
+    `).join('');
+}
+
+function displayAgents(agents) {
+    const tbody = document.querySelector('#agents-table tbody');
+    if (!agents || agents.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No agents found</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = agents.map(agent => `
+        <tr>
+            <td>${agent.id}</td>
+            <td>${agent.image}</td>
+            <td><span class="status-badge status-${agent.status.toLowerCase()}">${agent.status}</span></td>
+            <td>${agent.workflow_id || '-'}</td>
+            <td>${agent.step_id || '-'}</td>
+            <td>${agent.started_at ? new Date(agent.started_at).toLocaleString() : '-'}</td>
+            <td>
+                ${getAgentActions(agent)}
+            </td>
+        </tr>
+    `).join('');
+}
+
+function getAgentActions(agent) {
+    const actions = [];
+    
+    switch(agent.status.toLowerCase()) {
+        case 'created':
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'start')">Start</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'remove')">Remove</a>`);
+            break;
+        case 'running':
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'stop')">Stop</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'pause')">Pause</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'restart')">Restart</a>`);
+            break;
+        case 'stopped':
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'start')">Start</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'resume')">Resume</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'remove')">Remove</a>`);
+            break;
+        case 'paused':
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'resume')">Resume</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'stop')">Stop</a>`);
+            break;
+        case 'failed':
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'resume')">Resume</a>`);
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'remove')">Remove</a>`);
+            break;
+        default:
+            actions.push(`<a href="#" onclick="agentAction('${agent.id}', 'remove')">Remove</a>`);
+    }
+    
+    return actions.join(' | ');
+}
+
+async function agentAction(agentId, action) {
+    const confirmMessages = {
+        stop: 'Are you sure you want to stop this agent?',
+        remove: 'Are you sure you want to remove this agent? This cannot be undone.',
+        restart: 'Are you sure you want to restart this agent?',
+        pause: 'Are you sure you want to pause this agent?'
+    };
+    
+    if (confirmMessages[action] && !confirm(confirmMessages[action])) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/agents/${agentId}/${action}`, {
+            method: action === 'remove' ? 'DELETE' : 'POST',
+            headers: {
+                'Authorization': 'Bearer agentainer-default-token'
+            }
+        });
+        
+        if (response.ok) {
+            setTimeout(() => {
+                loadActiveAgents();
+            }, 1000);
+        } else {
+            const error = await response.text();
+            alert(`Failed to ${action} agent: ${error}`);
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+// Load initial data
+loadAgentPools();
+loadActiveAgents();
+
+// Refresh periodically
+setInterval(() => {
+    loadAgentPools();
+    loadActiveAgents();
+}, 5000);
+</script>
+{{end}}

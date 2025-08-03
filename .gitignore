@@ -35,6 +35,20 @@ data/
 *.log
 agent-states/
 
+# Compiled Go binaries
+mapreduce-*
+!mapreduce-*.go
+!mapreduce-workflow/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
 # Environment variables
 .env
 .env.local

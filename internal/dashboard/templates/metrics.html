@@ -1,0 +1,139 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h2>Metrics</h2>
+
+<div class="card">
+    <h3>Time Range</h3>
+    <select id="duration-select" onchange="changeDuration()">
+        <option value="1h" {{if eq .Duration "1h0m0s"}}selected{{end}}>Last Hour</option>
+        <option value="6h" {{if eq .Duration "6h0m0s"}}selected{{end}}>Last 6 Hours</option>
+        <option value="24h" {{if eq .Duration "24h0m0s"}}selected{{end}}>Last 24 Hours</option>
+        <option value="7d" {{if eq .Duration "168h0m0s"}}selected{{end}}>Last 7 Days</option>
+    </select>
+</div>
+
+<div class="card">
+    <h3>Workflow Metrics</h3>
+    <div class="metrics-grid">
+        {{if .Aggregates.workflows_started}}
+        <div class="metric-card">
+            <div class="metric-label">Workflows Started</div>
+            <div class="metric-value">{{.Aggregates.workflows_started}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.workflows_completed}}
+        <div class="metric-card">
+            <div class="metric-label">Workflows Completed</div>
+            <div class="metric-value">{{.Aggregates.workflows_completed}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.workflows_failed}}
+        <div class="metric-card">
+            <div class="metric-label">Workflows Failed</div>
+            <div class="metric-value">{{.Aggregates.workflows_failed}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.success_rate}}
+        <div class="metric-card">
+            <div class="metric-label">Success Rate</div>
+            <div class="metric-value">{{printf "%.1f%%" .Aggregates.success_rate}}</div>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<div class="card">
+    <h3>Performance Metrics</h3>
+    <div class="metrics-grid">
+        {{if .Aggregates.avg_duration}}
+        <div class="metric-card">
+            <div class="metric-label">Average Duration</div>
+            <div class="metric-value">{{.Aggregates.avg_duration}}s</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.max_duration}}
+        <div class="metric-card">
+            <div class="metric-label">Max Duration</div>
+            <div class="metric-value">{{.Aggregates.max_duration}}s</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.min_duration}}
+        <div class="metric-card">
+            <div class="metric-label">Min Duration</div>
+            <div class="metric-value">{{.Aggregates.min_duration}}s</div>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<div class="card">
+    <h3>Resource Utilization</h3>
+    <div class="metrics-grid">
+        {{if .Aggregates.total_agents}}
+        <div class="metric-card">
+            <div class="metric-label">Total Agents</div>
+            <div class="metric-value">{{.Aggregates.total_agents}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.active_agents}}
+        <div class="metric-card">
+            <div class="metric-label">Active Agents</div>
+            <div class="metric-value">{{.Aggregates.active_agents}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.agents_reused}}
+        <div class="metric-card">
+            <div class="metric-label">Agents Reused</div>
+            <div class="metric-value">{{.Aggregates.agents_reused}}</div>
+        </div>
+        {{end}}
+        {{if .Aggregates.pool_efficiency}}
+        <div class="metric-card">
+            <div class="metric-label">Pool Efficiency</div>
+            <div class="metric-value">{{printf "%.1f%%" .Aggregates.pool_efficiency}}</div>
+        </div>
+        {{end}}
+    </div>
+</div>
+
+<div class="card">
+    <h3>Error Analysis</h3>
+    <div id="error-chart">
+        {{if .Aggregates.error_types}}
+        <table>
+            <thead>
+                <tr>
+                    <th>Error Type</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range $type, $count := .Aggregates.error_types}}
+                <tr>
+                    <td>{{$type}}</td>
+                    <td>{{$count}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p>No errors recorded in the selected time range.</p>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+function changeDuration() {
+    const duration = document.getElementById('duration-select').value;
+    window.location.href = `/dashboard/metrics?duration=${duration}`;
+}
+
+// Auto-refresh metrics
+setInterval(() => {
+    window.location.reload();
+}, 30000); // Refresh every 30 seconds
+</script>
+{{end}}
