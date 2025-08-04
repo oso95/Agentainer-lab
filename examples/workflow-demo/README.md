@@ -1,473 +1,243 @@
-# Agentainer Workflow Demo: Multi-URL Analysis with Map-Reduce
+# Multi-URL Analysis Workflow Demo
 
-This example demonstrates Agentainer's powerful workflow orchestration capabilities, showcasing parallel processing with Map-Reduce patterns for analyzing multiple web articles simultaneously.
+This example demonstrates Agentainer's map/reduce workflow orchestration for parallel web content analysis using AI.
 
-## Overview
+## What This Demo Does
 
-This workflow demonstrates key Agentainer features:
-- 🔄 **Sequential Processing**: Step-by-step execution with dependencies
-- 🗺️ **Map Phase**: Parallel processing of multiple URLs
-- 🔀 **Reduce Phase**: Aggregation of results from parallel tasks
-- 🤖 **Multi-Agent Orchestration**: Coordinating different AI agents (GPT, Gemini)
-- 📊 **State Management**: Sharing data between workflow steps via Redis
-- 💾 **File Output**: Saving all results locally for further analysis
+1. **Prepares** a list of URLs for processing
+2. **Maps** URL processing across parallel containers (using Agentainer's new map step type)
+3. **Reduces** results into aggregated data
+4. **Analyzes** content with AI agents (Gemini for entity extraction, GPT for insights)
+5. **Generates** a comprehensive report combining all findings
 
-## Key Agentainer Concepts Demonstrated
-
-### 1. Workflow Steps and Dependencies
-Workflows consist of steps that can depend on each other:
-```json
-{
-  "id": "process",
-  "type": "map",
-  "depends_on": ["prepare"],
-  "config": {
-    "map_over": "urls"  // Creates parallel tasks
-  }
-}
-```
-
-### 2. Step Types
-- **Sequential**: Runs once, processes data linearly
-- **Map**: Creates multiple parallel tasks from input data
-- **Reduce**: Aggregates results from map phase
-
-### 3. Dynamic Task Creation
-The `map_over` field dynamically creates tasks:
-- Input: `["url1", "url2", "url3"]`
-- Result: 3 parallel agents processing each URL
-
-## Prerequisites
-
-1. **Agentainer Server**: Make sure Agentainer server is running
-   ```bash
-   # From the root directory
-   make run
-   ```
-
-2. **API Keys**: Set up your API keys in the agent `.env` files:
-   - `gpt-workflow-agent/.env` - Add your OpenAI API key
-   - `gemini-workflow-agent/.env` - Add your Google API key
-
-3. **Docker**: Ensure Docker is installed and running
-
-## Setup
-
-Before running workflows, set up the environment and build Docker images:
+## Quick Start
 
 ```bash
+# 1. Set up API keys
+echo "OPENAI_API_KEY=your-key-here" > gpt-workflow-agent/.env
+echo "GEMINI_API_KEY=your-key-here" > gemini-workflow-agent/.env
+
+# 2. Build Docker images
 ./setup.sh
-```
 
-This script will:
-1. Check and create `.env` files from examples if needed
-2. Verify API keys are configured
-3. Build all Docker images:
-   - `doc-extractor:latest` - Web content extraction agent
-   - `gpt-workflow-agent:latest` - GPT-based analysis agent
-   - `gemini-workflow-agent:latest` - Gemini-based analysis agent
-4. Verify Agentainer server is running
-
-## Running the Workflow
-
-### Basic Usage
-
-```bash
-# Run the multi-URL analysis workflow
+# 3. Run the workflow
 python3 run_workflow.py
 ```
 
-The workflow will:
-1. Load URLs from `urls.txt` (edit this file with your URLs)
-2. Create a workflow with multiple processing steps
-3. Launch parallel agents to analyze each URL
-4. Aggregate results and generate cross-article insights
-5. Save all results to a timestamped directory
+## Architecture
 
-### Adding URLs to Analyze
-
-Edit `urls.txt` to add the URLs you want to analyze:
-```txt
-# One URL per line
-https://www.example.com/article1
-https://www.example.com/article2
-# Add up to 10 URLs
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Prepare   │ --> │     Map     │ --> │   Reduce    │
+│ (Sequential)│     │ (Parallel)  │     │(Sequential) │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │             │
+                 URL1          URL2         URL3
+                           
+                           ↓
+                           
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Entities   │ --> │  Insights   │ --> │   Report    │
+│  (Gemini)   │     │   (GPT)     │     │  (Gemini)   │
+└─────────────┘     └─────────────┘     └─────────────┘
 ```
 
-### Workflow Execution Flow
+## Workflow Configuration
 
-1. **Prepare Phase** (Sequential):
-   - Validates and prepares URLs for processing
-   - Stores URL list in workflow state
-   
-2. **Process Phase** (Map - Parallel):
-   - Agentainer creates one agent per URL
-   - Each agent fetches and analyzes its assigned URL
-   - Results stored in Redis for aggregation
-   
-3. **Aggregate Phase** (Reduce):
-   - Combines results from all URL processors
-   - Calculates statistics (success rate, total words, etc.)
-   
-4. **Entity Extraction** (Sequential):
-   - AI agent analyzes aggregated content
-   - Extracts entities across all articles
-   
-5. **Insights Generation** (Sequential):
-   - Identifies patterns and trends across articles
-   - Creates cross-article insights
-   
-6. **Report Generation** (Sequential):
-   - Produces comprehensive analysis report
-   - Includes findings from all previous steps
+### Key Components
 
-### Output Files
-
-Results are saved to a timestamped folder (e.g., `analysis_results_20240115_143022`):
-
-- **workflow_config.json** - Complete workflow configuration
-- **workflow_metadata.json** - Workflow ID and URL information
-- **aggregated_results.json** - Combined results from all URLs
-- **processing_summary.txt** - Statistics about URL processing
-- **entities_all_articles.json** - Entities extracted from all articles
-- **cross_article_insights.json** - AI-generated insights
-- **insights.txt** - Human-readable insights
-- **final_report.md** - Comprehensive analysis report
-- **ANALYSIS_SUMMARY.md** - Workflow execution summary
-
-## Example Output
-
-### Entities Report
-```markdown
-# Extracted Entities
-
-## People
-- Geoffrey Hinton
-- Yann LeCun
-- Andrew Ng
-
-## Organizations
-- OpenAI
-- Google DeepMind
-- MIT
-
-## Technologies
-- Neural Networks
-- Deep Learning
-- Transformers
-```
-
-### Insights
-```
-Key Insights:
-1. The article emphasizes the rapid advancement of AI in recent years
-2. There's a strong focus on ethical considerations and safety
-3. Multiple organizations are competing in the AI space
-4. Regulatory frameworks are still catching up with technology
-```
-
-## Understanding the Workflow Implementation
-
-### Core Workflow Configuration (from `run_workflow.py`)
-
-```python
-workflow_config = {
-    "name": "multi-url-analysis",
-    "steps": [
-        {
-            "id": "prepare",
-            "type": "sequential",  # Runs once
-            "config": {
-                "image": "doc-extractor:latest",
-                "input": {"urls": urls}
-            }
-        },
-        {
-            "id": "process",
-            "type": "map",  # Creates parallel tasks
-            "depends_on": ["prepare"],
-            "config": {
-                "map_over": "urls"  # KEY: One task per URL
-            }
-        },
-        {
-            "id": "aggregate",
-            "type": "reduce",  # Combines all results
-            "depends_on": ["process"]
-        }
-    ]
-}
-```
-
-### How Map-Reduce Works in Agentainer
-
-1. **Map Phase**:
-   - `map_over: "urls"` tells Agentainer to create one task per URL
-   - Each task gets one URL as input: `{"url": "...", "url_id": "..."}`
-   - Tasks run in parallel (up to `max_parallel` limit)
-
-2. **Reduce Phase**:
-   - Waits for all map tasks to complete
-   - Aggregates results from workflow state
-   - Produces combined output
-
-### State Management
-
-Agents share data through Redis-backed workflow state:
-```python
-# Writing to state (in agent)
-set_workflow_state(redis_client, "result_url_0", analysis)
-
-# Reading from state (in reducer)
-result = get_workflow_state(redis_client, "result_url_0")
-```
-
-## Configuration
-
-### Environment Variables
-
-- `AGENTAINER_API_URL` - Agentainer API endpoint (default: `http://localhost:8081`)
-- `AGENTAINER_AUTH_TOKEN` - Authentication token (default: `agentainer-default-token`)
-- `OPENAI_API_KEY` - Required for GPT agent (set in `gpt-workflow-agent/.env`)
-- `GOOGLE_API_KEY` - Required for Gemini agent (set in `gemini-workflow-agent/.env`)
-
-### Redis Connection
-
-Agents connect to Redis using the host automatically configured by Agentainer:
-- **Docker Compose deployment**: `redis:6379` (all platforms)
-- **Note**: The unified startup approach (`make run`) ensures Redis connectivity works correctly on all platforms (macOS, Linux, Windows WSL)
-
-## Building Complex Workflows: A Developer Guide
-
-### 1. Defining Workflow Steps
-
-Each step in your workflow should have:
+1. **Map Step Configuration** (`run_workflow.py`):
 ```python
 {
-    "id": "unique_step_id",
-    "name": "Human-readable name",
-    "type": "sequential|map|reduce",
-    "depends_on": ["previous_step_id"],  # Optional
+    "id": "process",
+    "name": "Process URLs in Parallel",
+    "type": "map",  # New Agentainer map step type
     "config": {
-        "image": "your-agent:latest",
-        "command": ["python", "app.py"],
-        "env": {"TASK_TYPE": "your_task"},
-        "input": {},  # Data for this step
-        "map_over": "field_name"  # For map steps only
+        "map_config": {
+            "input_path": "urls",  # Path to array in workflow state
+            "item_alias": "current_url",  # Variable name for each item
+            "max_concurrency": 3,  # Max parallel containers
+            "error_handling": "continue_on_error"
+        }
     }
 }
 ```
 
-### 2. Agent Implementation Pattern
+2. **Task Types** (defined in env_vars):
+- `prepare_urls` - Load and validate URLs
+- `process_url` - Fetch and analyze single URL (map phase)
+- `aggregate` - Combine results from all URLs
+- `extract_entities_multi` - AI entity extraction
+- `generate_insights_multi` - AI insight generation
+- `final_report_multi` - AI report generation
 
-Agents should follow this pattern:
-```python
-# 1. Get task type from environment
-TASK_TYPE = os.environ.get('TASK_TYPE')
+## File Structure
 
-# 2. Route to appropriate handler
-if TASK_TYPE == "prepare":
-    # Prepare data for map phase
-    result = prepare_data(task_input)
-elif TASK_TYPE == "process":
-    # Process individual item (map)
-    result = process_item(task_input)
-elif TASK_TYPE == "aggregate":
-    # Combine all results (reduce)
-    result = aggregate_results()
+```
+workflow-demo/
+├── README.md                    # This file
+├── setup.sh                     # Build script
+├── run_workflow.py              # Main workflow orchestrator
+├── urls.txt                     # Input URLs (user reference)
+│
+├── doc-extractor/               # Web content processor
+│   ├── Dockerfile
+│   ├── app_multi.py            # Handles prepare/map/reduce phases
+│   └── urls.txt                # URLs for Docker build
+│
+├── gemini-workflow-agent/       # Gemini AI agent
+│   ├── Dockerfile
+│   ├── app.py                  # Entity extraction & report generation
+│   └── .env                    # API key (create this)
+│
+└── gpt-workflow-agent/          # GPT AI agent
+    ├── Dockerfile
+    ├── app.py                  # Insight generation
+    └── .env                    # API key (create this)
 ```
 
-### 3. Passing Data Between Steps
+## Key Implementation Details
 
-**Via Input Field** (for initial data):
-```python
-"input": {
-    "urls": ["url1", "url2"],
-    "config": {"timeout": 30}
+### 1. Map Step Execution (Agentainer Core)
+
+The map step dynamically creates tasks based on input data:
+```go
+// internal/workflow/orchestrator.go
+func (o *Orchestrator) executeMapStep(ctx context.Context, workflow *Workflow, step *WorkflowStep) error {
+    // Extract array from workflow state
+    items := extractMapInput(workflow.State, mapConfig.InputPath)
+    
+    // Create parallel tasks for each item
+    for i, item := range items {
+        taskInput[mapConfig.ItemAlias] = item
+        // Deploy container for this task
+    }
 }
 ```
 
-**Via Workflow State** (for intermediate data):
-```python
-# Write in one step
-set_workflow_state(redis, "processed_data", data)
+### 2. State Management
 
-# Read in another step
-data = get_workflow_state(redis, "processed_data")
+All agents communicate through Redis:
+```python
+# Store result for URL processing
+redis_client.hset(f"workflow:{WORKFLOW_ID}:state", f"result_url_{i}", json.dumps(result))
+
+# Retrieve in aggregation phase
+result = redis_client.hget(f"workflow:{WORKFLOW_ID}:state", f"result_url_{i}")
 ```
 
-### 4. Error Handling
+### 3. Output Files
 
-```python
-"config": {
-    "failure_strategy": "continue_on_partial",
-    "max_retries": 3,
-    "timeout": "5m"
-}
+Results are saved to `analysis_results_TIMESTAMP/`:
+- `url_N_content.txt` - Full article content
+- `url_N_metadata.json` - URL metadata (title, word count, etc.)
+- `aggregated_results.json` - Combined processing results
+- `entities.md` - Extracted entities
+- `insights.md` - Cross-article insights
+- `FINAL_REPORT.md` - Comprehensive analysis
+
+## Customization Guide
+
+### Adding More URLs
+
+Edit `doc-extractor/urls.txt`:
+```
+https://example.com/article1
+https://example.com/article2
+# Comments are supported
 ```
 
-### 5. Monitoring and Debugging
+### Modifying AI Prompts
 
-- Check workflow status: View the dashboard at http://localhost:8080
-- Monitor Redis state: Use `redis-cli` to inspect workflow data
-- View agent logs: Check the timestamped output directory
+1. **Entity Extraction**: Edit `gemini-workflow-agent/app.py` → `extract_entities_multi()`
+2. **Insights**: Edit `gpt-workflow-agent/app.py` → `generate_insights_multi()`
+3. **Report**: Edit `gemini-workflow-agent/app.py` → `final_report_multi()`
 
-## Platform Compatibility
+### Changing Parallel Concurrency
 
-This workflow demo works on all platforms:
-- **macOS**: Full compatibility with Docker Desktop
-- **Linux**: Full compatibility with native Docker
-- **Windows**: Use WSL2 with Docker Desktop
+In `run_workflow.py`, modify the map_config:
+```python
+"max_concurrency": 5,  # Process 5 URLs simultaneously
+```
 
-The unified Agentainer startup (`make run` from root directory) automatically handles platform-specific Redis connectivity.
+### Adding New Analysis Steps
+
+1. Create new agent directory with Dockerfile and app.py
+2. Add new step to workflow configuration in `run_workflow.py`
+3. Implement task handler matching the TASK_TYPE
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Agents not starting**: 
-   - Run `./setup.sh` to ensure all images are built
-   - Check Docker is running: `docker ps`
+1. **"urls.txt not found"**: Ensure `urls.txt` exists in `doc-extractor/` directory
+2. **"Unknown task type"**: Check that TASK_TYPE in env_vars matches handler in agent
+3. **Redis connection failed**: Verify Agentainer is running (`make run`)
+4. **API errors**: Check `.env` files have valid API keys
 
-2. **Authentication errors**: 
-   - Ensure token matches config.yaml
-   - Check AGENTAINER_AUTH_TOKEN environment variable
+### Debugging Tips
 
-3. **Redis connection errors**: 
-   - Verify Agentainer is running with `make run`
-   - Check Redis container is running: `docker ps | grep redis`
+- Check container logs: `docker logs <container-name>`
+- Monitor workflow: `curl http://localhost:8081/dashboard/workflows`
+- Inspect Redis state: `redis-cli hgetall workflow:<id>:state`
 
-4. **API key errors**: 
-   - Check `.env` files have valid API keys
-   - Ensure no extra spaces or quotes in API keys
+## API Reference
 
-5. **Web extraction errors**:
-   - Some websites block automated access
-   - Try a different URL
-   - Check your internet connection
+### Workflow API Endpoints
 
-6. **Missing Results**:
-   - The workflow step may have failed
-   - Check the workflow status in the dashboard
-   - Look at `workflow_final_state.json` for error details
+- `POST /workflows` - Create new workflow
+- `POST /workflows/{id}/start` - Start workflow execution
+- `GET /workflows/{id}` - Get workflow status
+- `GET /dashboard/workflows` - View all workflows
 
-### Debug Commands
+### Workflow State Keys
 
-```bash
-# Check workflow status
-curl -H "Authorization: Bearer agentainer-default-token" \
-     http://localhost:8081/workflows/<workflow_id>
+- `urls` - Array of URL objects to process
+- `result_url_N` - Processing result for URL N
+- `content_url_N` - Full content for URL N
+- `aggregated_results` - Combined results from all URLs
+- `extracted_entities_multi` - AI-extracted entities
+- `insights_multi` - AI-generated insights
+- `final_report_multi` - Final analysis report
 
-# Check Redis connectivity
-docker exec -it agentainer-lab-redis-1 redis-cli ping
+## Advanced Features
 
-# View agent logs
-docker logs <agent-container-id>
-```
+### Error Handling
 
-## Tips for Best Results
+The map step supports different error handling strategies:
+- `continue_on_error` - Continue processing even if some URLs fail
+- `fail_fast` - Stop on first error
 
-1. **Choose Good URLs**: 
-   - Articles with substantial text content work best
-   - Avoid pages heavy with JavaScript or dynamic content
-   - News articles, blog posts, and documentation are ideal
+### Resource Limits
 
-2. **API Rate Limits**:
-   - Be mindful of OpenAI and Google API quotas
-   - The workflow processes content in chunks, which uses multiple API calls
-
-3. **Performance**:
-   - Longer articles take more time to process
-   - The parallel processing speeds up analysis significantly
-   - Expect 1-3 minutes for typical articles
-
-## Real-World Use Cases
-
-### 1. News Aggregation and Analysis
-```txt
-# urls.txt for news analysis
-https://techcrunch.com/latest/
-https://www.theverge.com/tech
-https://arstechnica.com/
-# Agentainer will find common themes across sources
-```
-
-### 2. Competitive Analysis
-```txt
-# urls.txt for competitor analysis
-https://competitor1.com/features
-https://competitor2.com/pricing
-https://competitor3.com/about
-# Get insights about market positioning
-```
-
-### 3. Research Paper Analysis
-```txt
-# urls.txt for academic research
-https://arxiv.org/abs/2301.00234
-https://arxiv.org/abs/2301.00567
-https://arxiv.org/abs/2301.00890
-# Extract methodologies and findings
-```
-
-### 4. Documentation Review
-```txt
-# urls.txt for API documentation
-https://docs.service.com/api/v1
-https://docs.service.com/api/v2
-https://docs.service.com/migration
-# Understand API evolution and changes
-```
-
-## Extending the Workflow
-
-### Adding New Processing Steps
-
-1. Create a new agent with specific capabilities
-2. Add the step to workflow configuration:
+Each container has configurable resource limits:
 ```python
-{
-    "id": "sentiment",
-    "name": "Analyze Sentiment",
-    "type": "sequential",
-    "depends_on": ["aggregate"],
-    "config": {
-        "image": "sentiment-analyzer:latest"
-    }
+"resource_limits": {
+    "cpu_limit": 500000000,    # 0.5 CPU cores
+    "memory_limit": 268435456   # 256 MB
 }
 ```
 
-### Customizing Parallel Processing
+### Dynamic Task Creation
 
-```python
-"config": {
-    "max_parallel": 10,  # Max concurrent agents
-    "pool_size": 5,     # Pre-warmed agent pool
-    "timeout": "30m"    # Workflow timeout
-}
-```
+The map step creates tasks dynamically based on workflow state, enabling:
+- Variable number of URLs
+- Conditional processing
+- Data-driven parallelism
 
-### Advanced State Management
+## Contributing
 
-For complex data flows:
-```python
-# Store structured data
-set_workflow_state(redis, "analysis_matrix", {
-    "url1": {"sentiment": 0.8, "entities": [...]},
-    "url2": {"sentiment": 0.6, "entities": [...]}
-})
+To extend this demo:
+1. Fork the repository
+2. Create your feature branch
+3. Add new agents or workflow steps
+4. Update this README
+5. Submit a pull request
 
-# Use in reduce phase
-matrix = get_workflow_state(redis, "analysis_matrix")
-avg_sentiment = sum(d["sentiment"] for d in matrix.values()) / len(matrix)
-```
+## Related Examples
 
-## Best Practices
-
-1. **Design for Parallelism**: Structure data so map phase can process independently
-2. **Handle Failures Gracefully**: Use `continue_on_partial` for resilient workflows
-3. **Optimize State Storage**: Store only necessary data in workflow state
-4. **Monitor Progress**: Use the dashboard to track parallel execution
-5. **Test Incrementally**: Start with few URLs, then scale up
-
-Enjoy building complex workflows with Agentainer! 🚀
+- `mapreduce-workflow/` - Pure map-reduce computation example
+- `simple-workflow/` - Basic sequential workflow
+- `scheduler-demo/` - Scheduled workflow execution

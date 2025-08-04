@@ -57,6 +57,7 @@ type WorkflowConfig struct {
 	ResourceLimits   *ResourceLimits   `json:"resource_limits,omitempty"`
 	EnableProfiling  bool              `json:"enable_profiling,omitempty"`
 	Schedule         string            `json:"schedule,omitempty"` // Cron schedule
+	CleanupPolicy    string            `json:"cleanup_policy,omitempty"` // "always" (default), "on_success", "never"
 }
 
 // WorkflowStep represents a single step in a workflow

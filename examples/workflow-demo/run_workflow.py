@@ -104,7 +104,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "doc-extractor:latest",
                         "command": ["python", "app_multi.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "prepare_urls",
                             "URL_COUNT": str(len(urls))  # Pass URL count for validation
                         },
@@ -127,7 +127,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "doc-extractor:latest",
                         "command": ["python", "app_multi.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "process_url"
                         },
                         "map_config": {
@@ -154,7 +154,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "doc-extractor:latest",
                         "command": ["python", "app_multi.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "aggregate"
                         },
                         "resource_limits": {
@@ -176,7 +176,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "gemini-workflow-agent:latest",
                         "command": ["python", "app.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "extract_entities_multi"
                         },
                         "resource_limits": {
@@ -198,7 +198,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "gpt-workflow-agent:latest",
                         "command": ["python", "app.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "generate_insights_multi"
                         },
                         "resource_limits": {
@@ -219,7 +219,7 @@ class MultiURLWorkflow:
                     "config": {
                         "image": "gemini-workflow-agent:latest",
                         "command": ["python", "app.py"],
-                        "env": {
+                        "env_vars": {
                             "TASK_TYPE": "final_report_multi"
                         },
                         "resource_limits": {
@@ -341,7 +341,34 @@ class MultiURLWorkflow:
         step_id = step["id"]
         
         # Get results from Redis based on step type
-        if step_id == "aggregate":
+        if step_id == "process":
+            # Save individual URL processing results
+            # Get the URL results from the map state
+            process_results = self.get_workflow_state(workflow_id, "process_results")
+            if process_results and isinstance(process_results, list):
+                self.save_json("url_processing_results.json", process_results)
+                
+            # Also save individual content files
+            for i in range(10):  # Check up to 10 URLs
+                url_result = self.get_workflow_state(workflow_id, f"result_url_{i}")
+                if url_result:
+                    # Save URL result regardless of status
+                    self.save_json(f"url_{i}_metadata.json", url_result)
+                    
+                    if url_result.get("status") == "success":
+                        # Save the full content for successful URLs
+                        content = self.get_workflow_state(workflow_id, f"content_url_{i}")
+                        if content:
+                            self.save_text(f"url_{i}_content.txt", content)
+                    else:
+                        # Save error information for failed URLs
+                        error_info = f"# URL {i} Failed\n\n"
+                        error_info += f"URL: {url_result.get('url', 'Unknown')}\n"
+                        error_info += f"Error: {url_result.get('error', 'Unknown error')}\n"
+                        error_info += f"Status: {url_result.get('status', 'failed')}\n"
+                        self.save_text(f"url_{i}_error.txt", error_info)
+                            
+        elif step_id == "aggregate":
             # Save aggregated results
             results = self.get_workflow_state(workflow_id, "aggregated_results")
             if results:
@@ -364,25 +391,27 @@ class MultiURLWorkflow:
         
         elif step_id == "entities":
             # Save entity extraction results
-            entities = self.get_workflow_state(workflow_id, "multi_entities")
+            entities = self.get_workflow_state(workflow_id, "extracted_entities_multi")
             if entities:
                 self.save_json("entities_all_articles.json", entities)
+                if isinstance(entities, dict) and "entities" in entities:
+                    self.save_text("entities.md", f"# Extracted Entities\n\n{entities['entities']}")
         
         elif step_id == "insights":
             # Save insights
-            insights = self.get_workflow_state(workflow_id, "multi_insights")
+            insights = self.get_workflow_state(workflow_id, "insights_multi")
             if insights:
                 self.save_json("cross_article_insights.json", insights)
                 if isinstance(insights, dict) and "insights" in insights:
-                    self.save_text("insights.txt", insights["insights"])
+                    self.save_text("insights.md", f"# Cross-Article Insights\n\n{insights['insights']}")
         
         elif step_id == "report":
             # Save final report
-            report = self.get_workflow_state(workflow_id, "multi_final_report")
+            report = self.get_workflow_state(workflow_id, "final_report_multi")
             if report:
                 self.save_json("final_report.json", report)
-                if isinstance(report, dict) and "report" in report:
-                    self.save_text("final_report.md", report["report"])
+                if isinstance(report, dict) and "final_report" in report:
+                    self.save_text("FINAL_REPORT.md", report["final_report"])
     
     def get_workflow_state(self, workflow_id: str, key: str):
         """Get data from workflow state in Redis"""

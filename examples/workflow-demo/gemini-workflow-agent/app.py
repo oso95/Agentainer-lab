@@ -291,6 +291,100 @@ def aggregate_analysis(task_data, redis_client):
     
     return result
 
+def extract_entities_multi(task_data, redis_client):
+    """Extract entities from multiple URL results"""
+    # Get aggregated results from workflow state
+    aggregated_data = get_workflow_state(redis_client, "aggregated_results") or {}
+    individual_results = aggregated_data.get("individual_results", [])
+    
+    if not individual_results:
+        raise ValueError("No aggregated results found for entity extraction")
+    
+    # Collect all content
+    all_content = []
+    for result in individual_results:
+        if result.get("status") == "success":
+            url_id = result.get("url_id")
+            content = get_workflow_state(redis_client, f"content_{url_id}")
+            if content:
+                all_content.append({
+                    "url": result.get("url"),
+                    "title": result.get("title"),
+                    "content": content[:2000]  # Limit content per article
+                })
+    
+    if not all_content:
+        raise ValueError("No text provided for entity extraction")
+    
+    prompt = f"""Analyze the following {len(all_content)} articles and extract key entities:
+    
+    {json.dumps(all_content, indent=2)}
+    
+    Please identify and categorize:
+    1. People (names, titles, roles)
+    2. Organizations (companies, institutions)
+    3. Technologies (AI models, software, platforms)
+    4. Key concepts and themes
+    5. Dates and events
+    
+    Return a structured analysis showing entities across all articles."""
+    
+    response = model.generate_content(prompt)
+    
+    result = {
+        "entities": response.text,
+        "articles_analyzed": len(all_content),
+        "timestamp": time.time()
+    }
+    
+    # Save to workflow state
+    set_workflow_state(redis_client, "extracted_entities_multi", result)
+    
+    return result
+
+def final_report_multi(task_data, redis_client):
+    """Generate comprehensive report from multi-URL analysis"""
+    # Gather all components
+    aggregated_data = get_workflow_state(redis_client, "aggregated_results") or {}
+    entities_data = get_workflow_state(redis_client, "extracted_entities_multi") or {}
+    insights_data = get_workflow_state(redis_client, "insights_multi") or {}
+    
+    prompt = f"""Create a comprehensive report based on the analysis of {aggregated_data.get('total_urls', 0)} articles:
+    
+    Summary Statistics:
+    - Articles analyzed: {aggregated_data.get('successful', 0)} successful, {aggregated_data.get('failed', 0)} failed
+    - Total words analyzed: {aggregated_data.get('total_words_analyzed', 0)}
+    - Domains covered: {', '.join(aggregated_data.get('unique_domains', []))}
+    
+    Entities Extracted:
+    {entities_data.get('entities', 'Not available')}
+    
+    Cross-Article Insights:
+    {insights_data.get('insights', 'Not available')}
+    
+    Please create a comprehensive report that includes:
+    1. Executive summary
+    2. Key findings across all articles
+    3. Common themes and patterns
+    4. Notable differences or contradictions
+    5. Strategic recommendations
+    6. Areas for further investigation
+    """
+    
+    response = model.generate_content(prompt)
+    
+    result = {
+        "final_report": response.text,
+        "report_type": "multi_url_analysis",
+        "articles_included": aggregated_data.get('successful', 0),
+        "timestamp": time.time()
+    }
+    
+    # Save to workflow state
+    set_workflow_state(redis_client, "final_report_multi", result)
+    
+    return result
+
 def main():
     """Main execution function"""
     print(f"Gemini Workflow Agent starting...")
@@ -315,6 +409,10 @@ def main():
             result = generate_insights(task_data, redis_client)
         elif TASK_TYPE == "aggregate_analysis":
             result = aggregate_analysis(task_data, redis_client)
+        elif TASK_TYPE == "extract_entities_multi":
+            result = extract_entities_multi(task_data, redis_client)
+        elif TASK_TYPE == "final_report_multi":
+            result = final_report_multi(task_data, redis_client)
         else:
             raise Exception(f"Unknown task type: {TASK_TYPE}")
         

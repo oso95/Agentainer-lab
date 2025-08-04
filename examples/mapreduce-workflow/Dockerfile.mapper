@@ -3,7 +3,7 @@ FROM python:3.9-slim
 WORKDIR /app
 
 # Install required packages
-RUN pip install requests redis
+RUN pip install --no-cache-dir requests redis beautifulsoup4
 
 # Copy the mapper script
 COPY mapper.py .

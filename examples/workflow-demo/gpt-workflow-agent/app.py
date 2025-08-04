@@ -192,6 +192,66 @@ def analyze_text(task_data, redis_client):
     
     return result
 
+def generate_insights_multi(task_data, redis_client):
+    """Generate cross-article insights from multiple URLs"""
+    # Get aggregated results from workflow state
+    aggregated_data = get_workflow_state(redis_client, "aggregated_results") or {}
+    entities_data = get_workflow_state(redis_client, "extracted_entities_multi") or {}
+    
+    individual_results = aggregated_data.get("individual_results", [])
+    
+    # Build context from all articles
+    article_summaries = []
+    for result in individual_results:
+        if result.get("status") == "success":
+            article_summaries.append({
+                "url": result.get("url"),
+                "title": result.get("title"),
+                "summary": result.get("summary", ""),
+                "word_count": result.get("word_count", 0),
+                "domain": result.get("domain", "")
+            })
+    
+    prompt = f"""Based on the analysis of {len(article_summaries)} articles about AI and technology, generate strategic insights:
+    
+    Articles analyzed:
+    {json.dumps(article_summaries, indent=2)}
+    
+    Entities found across articles:
+    {entities_data.get('entities', 'Not available')}
+    
+    Please provide:
+    1. Common themes and patterns across all articles
+    2. Key trends in AI development and adoption
+    3. Major players and their strategies
+    4. Potential implications for the tech industry
+    5. Contrasting viewpoints or disagreements
+    6. Emerging opportunities and risks
+    
+    Focus on actionable insights that connect information across all sources."""
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are an expert analyst specializing in technology trends and AI developments."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7,
+        max_tokens=1500
+    )
+    
+    result = {
+        "insights": response.choices[0].message.content,
+        "articles_analyzed": len(article_summaries),
+        "insight_type": "cross_article_analysis",
+        "timestamp": time.time()
+    }
+    
+    # Save to workflow state
+    set_workflow_state(redis_client, "insights_multi", result)
+    
+    return result
+
 def main():
     """Main execution function"""
     print(f"GPT Workflow Agent starting...")
@@ -213,6 +273,8 @@ def main():
             result = summarize_chunk(task_data, redis_client)
         elif TASK_TYPE == "analyze":
             result = analyze_text(task_data, redis_client)
+        elif TASK_TYPE == "generate_insights_multi":
+            result = generate_insights_multi(task_data, redis_client)
         else:
             raise Exception(f"Unknown task type: {TASK_TYPE}")
         

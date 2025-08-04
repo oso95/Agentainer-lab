@@ -2,24 +2,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies directly
+RUN pip install --no-cache-dir \
+    redis==5.0.1 \
+    requests==2.31.0 \
+    beautifulsoup4==4.12.2 \
+    html2text==2024.2.26
 
-# Copy application files
-COPY app.py app_web.py app_multi.py ./
-
-# Copy URLs file if it exists
-COPY urls.txt* ./
+# Copy application file and URLs
+COPY app_multi.py ./
+COPY urls.txt ./
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
 ENV REDIS_HOST=redis
 ENV REDIS_PORT=6379
 
-# Expose port
-EXPOSE ${PORT}
-
-# Default to multi-URL version for workflow demo
+# Run the multi-URL processor
 CMD ["python", "app_multi.py"]

@@ -2,22 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies directly
+RUN pip install --no-cache-dir \
+    openai==1.58.1 \
+    python-dotenv==1.0.0 \
+    redis==5.0.1
 
 # Copy application and environment file
 COPY app.py .
 COPY .env .env
 
-# Environment variables (set defaults, can be overridden)
+# Environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
 ENV REDIS_HOST=redis
 ENV REDIS_PORT=6379
-
-# Expose port
-EXPOSE ${PORT}
 
 # Run the application
 CMD ["python", "app.py"]

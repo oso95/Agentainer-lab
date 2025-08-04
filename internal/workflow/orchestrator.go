@@ -154,7 +154,7 @@ func (o *Orchestrator) ExecuteWorkflow(ctx context.Context, workflowID string) e
 	return nil
 }
 
-// executeStep executes a single workflow step
+// executeStep executes a single workflow step with retry support
 func (o *Orchestrator) executeStep(ctx context.Context, workflow *Workflow, step *WorkflowStep) error {
 	// Check dependencies
 	if err := o.waitForDependencies(ctx, workflow, step); err != nil {
@@ -177,6 +177,63 @@ func (o *Orchestrator) executeStep(ctx context.Context, workflow *Workflow, step
 		}
 	}
 
+	// Execute with retry logic
+	var lastErr error
+	maxAttempts := 1
+	if step.Config.RetryPolicy != nil && step.Config.RetryPolicy.MaxAttempts > 0 {
+		maxAttempts = step.Config.RetryPolicy.MaxAttempts
+	}
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// This is a retry attempt
+			retryCount := o.incrementRetryCount(step)
+			delay := o.calculateBackoffDelay(retryCount-1, step.Config.RetryPolicy)
+			
+			log.Printf("Retrying step %s after %v (attempt %d/%d)", step.ID, delay, retryCount, maxAttempts)
+			
+			// Save workflow to persist retry count
+			if err := o.workflowManager.SaveWorkflow(ctx, workflow); err != nil {
+				log.Printf("Warning: failed to save workflow after updating retry count: %v", err)
+			}
+			
+			// Wait before retry
+			select {
+			case <-time.After(delay):
+				// Continue with retry
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			
+			// Reset step status for retry
+			step.Status = StepStatusPending
+			step.StartedAt = nil
+			step.CompletedAt = nil
+			step.Error = ""
+		}
+
+		// Execute the step
+		lastErr = o.executeStepInternal(ctx, workflow, step)
+		
+		if lastErr == nil {
+			// Success - no need to retry
+			return nil
+		}
+		
+		// Check if we should retry
+		if !o.shouldRetryStep(step) {
+			break
+		}
+		
+		log.Printf("Step %s failed with error: %v", step.ID, lastErr)
+	}
+	
+	// All attempts exhausted
+	return lastErr
+}
+
+// executeStepInternal executes a single workflow step without retry logic
+func (o *Orchestrator) executeStepInternal(ctx context.Context, workflow *Workflow, step *WorkflowStep) error {
 	// Update step status to running
 	step.Status = StepStatusRunning
 	now := time.Now()
@@ -208,6 +265,92 @@ func (o *Orchestrator) executeStep(ctx context.Context, workflow *Workflow, step
 		return o.executeSubWorkflowStep(ctx, workflow, step)
 	default:
 		return fmt.Errorf("unsupported step type: %s", step.Type)
+	}
+}
+
+// calculateBackoffDelay calculates retry delay based on backoff strategy
+func (o *Orchestrator) calculateBackoffDelay(retryCount int, policy *RetryPolicy) time.Duration {
+	baseDelay, _ := time.ParseDuration(policy.Delay)
+	if baseDelay == 0 {
+		baseDelay = 5 * time.Second // Default delay
+	}
+	
+	switch policy.Backoff {
+	case "exponential":
+		return baseDelay * time.Duration(1<<uint(retryCount))
+	case "linear":
+		return baseDelay * time.Duration(retryCount+1)
+	default: // "constant"
+		return baseDelay
+	}
+}
+
+// getRetryCount gets the current retry count for a step
+func (o *Orchestrator) getRetryCount(step *WorkflowStep) int {
+	if step.Metadata == nil {
+		return 0
+	}
+	retryCount := 0
+	if countStr, exists := step.Metadata["retry_count"]; exists {
+		fmt.Sscanf(countStr, "%d", &retryCount)
+	}
+	return retryCount
+}
+
+// incrementRetryCount increments the retry count for a step
+func (o *Orchestrator) incrementRetryCount(step *WorkflowStep) int {
+	if step.Metadata == nil {
+		step.Metadata = make(map[string]string)
+	}
+	retryCount := o.getRetryCount(step) + 1
+	step.Metadata["retry_count"] = fmt.Sprintf("%d", retryCount)
+	return retryCount
+}
+
+// shouldRetryStep determines if a failed step should be retried
+func (o *Orchestrator) shouldRetryStep(step *WorkflowStep) bool {
+	if step.Config.RetryPolicy == nil || step.Config.RetryPolicy.MaxAttempts <= 0 {
+		return false
+	}
+	
+	retryCount := o.getRetryCount(step)
+	return retryCount < step.Config.RetryPolicy.MaxAttempts
+}
+
+// shouldCleanupAgent determines if an agent should be cleaned up based on workflow policy
+func (o *Orchestrator) shouldCleanupAgent(workflow *Workflow, step *WorkflowStep, stepFailed bool) bool {
+	// If step failed and has a retry policy, don't cleanup yet
+	// TODO: Integrate with actual retry mechanism when implemented
+	if stepFailed && step != nil && step.Config.RetryPolicy != nil && step.Config.RetryPolicy.MaxAttempts > 0 {
+		// Check if we've exhausted retries
+		retryCount := 0
+		if step.Metadata != nil {
+			if countStr, exists := step.Metadata["retry_count"]; exists {
+				fmt.Sscanf(countStr, "%d", &retryCount)
+			}
+		}
+		// Only keep the agent if we haven't exhausted retries
+		if retryCount < step.Config.RetryPolicy.MaxAttempts {
+			log.Printf("Not cleaning up agent for step %s - retry policy active (%d/%d attempts)", 
+				step.ID, retryCount, step.Config.RetryPolicy.MaxAttempts)
+			return false
+		}
+	}
+	
+	policy := workflow.Config.CleanupPolicy
+	if policy == "" {
+		policy = "always" // Default policy
+	}
+	
+	switch policy {
+	case "always":
+		return true
+	case "on_success":
+		return !stepFailed
+	case "never":
+		return false
+	default:
+		return true // Default to always cleanup
 	}
 }
 
@@ -296,88 +439,124 @@ func (o *Orchestrator) waitForTaskCompletion(ctx context.Context, taskID string,
 
 // executeSequentialStep executes a sequential step
 func (o *Orchestrator) executeSequentialStep(ctx context.Context, workflow *Workflow, step *WorkflowStep) error {
-	// Create task for this step
-	taskID := fmt.Sprintf("task-%s-%s-%d", workflow.ID, step.ID, time.Now().UnixNano())
-	task := map[string]interface{}{
-		"task_id":     taskID,
-		"workflow_id": workflow.ID,
-		"step_id":     step.ID,
-		"step_name":   step.Name,
-		"task_type":   step.Config.EnvVars["TASK_TYPE"], // Get task type from env vars
-		"input":       workflow.State,                    // Pass workflow state as input
-		"created_at":  time.Now().Unix(),
-	}
+	// Check if we have an existing agent from a previous attempt
+	var agent *agent.Agent
+	var agentID string
+	var taskID string
 	
-	// Write task to Redis
-	taskKey := fmt.Sprintf("task:%s", taskID)
-	taskData, err := json.Marshal(task)
-	if err != nil {
-		return fmt.Errorf("failed to marshal task: %w", err)
-	}
-	
-	if err := o.redisClient.Set(ctx, taskKey, taskData, 1*time.Hour).Err(); err != nil {
-		return fmt.Errorf("failed to write task to Redis: %w", err)
-	}
-	
-	// Also add to workflow's task list
-	if err := o.redisClient.RPush(ctx, fmt.Sprintf("workflow:%s:tasks", workflow.ID), taskID).Err(); err != nil {
-		log.Printf("Warning: failed to add task to workflow list: %v", err)
-	}
-	
-	// Prepare environment variables with Redis connection info
-	envVars := make(map[string]string)
-	for k, v := range step.Config.EnvVars {
-		envVars[k] = v
-	}
-	
-	// Add task ID to environment
-	envVars["TASK_ID"] = taskID
-	
-	// Add Redis connection info if not already present
-	if _, ok := envVars["REDIS_HOST"]; !ok {
-		// Use the same Redis host that Agentainer is configured with
-		redisHost := os.Getenv("AGENTAINER_REDIS_HOST")
-		if redisHost == "" {
-			// Default to host.docker.internal for Docker Desktop (Mac/Windows)
-			// On Linux, this might need to be the Docker bridge IP (172.17.0.1)
-			redisHost = "host.docker.internal"
+	if step.Metadata != nil && step.Metadata["agent_id"] != "" {
+		// Try to reuse existing agent from previous attempt
+		agentID = step.Metadata["agent_id"]
+		existingAgent, err := o.agentManager.GetAgent(agentID)
+		if err == nil && existingAgent.Status != "failed" {
+			agent = existingAgent
+			taskID = step.Metadata["task_id"]
+			log.Printf("Reusing existing agent %s for retry of step %s", agentID, step.ID)
 		}
-		envVars["REDIS_HOST"] = redisHost
-	}
-	if _, ok := envVars["REDIS_PORT"]; !ok {
-		envVars["REDIS_PORT"] = "6379"
 	}
 	
-	// Deploy agent with workflow metadata
-	agent, err := o.agentManager.DeployWithWorkflow(
-		ctx,
-		fmt.Sprintf("%s-%s", workflow.Name, step.Name),
-		step.Config.Image,
-		envVars,
-		step.Config.ResourceLimits.CPULimit,
-		step.Config.ResourceLimits.MemoryLimit,
-		false, // auto-restart
-		"",    // token
-		nil,   // ports
-		nil,   // volumes
-		nil,   // health check
-		workflow.ID,
-		step.ID,
-		taskID,
-		workflow.Metadata,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to deploy agent: %w", err)
-	}
+	if agent == nil {
+		// Create new agent and task
+		taskID = fmt.Sprintf("task-%s-%s-%d", workflow.ID, step.ID, time.Now().UnixNano())
+		task := map[string]interface{}{
+			"task_id":     taskID,
+			"workflow_id": workflow.ID,
+			"step_id":     step.ID,
+			"step_name":   step.Name,
+			"task_type":   step.Config.EnvVars["TASK_TYPE"], // Get task type from env vars
+			"input":       workflow.State,                    // Pass workflow state as input
+			"created_at":  time.Now().Unix(),
+		}
+		
+		// Write task to Redis
+		taskKey := fmt.Sprintf("task:%s", taskID)
+		taskData, err := json.Marshal(task)
+		if err != nil {
+			return fmt.Errorf("failed to marshal task: %w", err)
+		}
+		
+		if err := o.redisClient.Set(ctx, taskKey, taskData, 1*time.Hour).Err(); err != nil {
+			return fmt.Errorf("failed to write task to Redis: %w", err)
+		}
+		
+		// Also add to workflow's task list
+		if err := o.redisClient.RPush(ctx, fmt.Sprintf("workflow:%s:tasks", workflow.ID), taskID).Err(); err != nil {
+			log.Printf("Warning: failed to add task to workflow list: %v", err)
+		}
+		
+		// Prepare environment variables with Redis connection info
+		envVars := make(map[string]string)
+		for k, v := range step.Config.EnvVars {
+			envVars[k] = v
+		}
+		
+		// Add task ID to environment
+		envVars["TASK_ID"] = taskID
+		
+		// Add Redis connection info if not already present
+		if _, ok := envVars["REDIS_HOST"]; !ok {
+			// Use the same Redis host that Agentainer is configured with
+			redisHost := os.Getenv("AGENTAINER_REDIS_HOST")
+			if redisHost == "" {
+				// Default to host.docker.internal for Docker Desktop (Mac/Windows)
+				// On Linux, this might need to be the Docker bridge IP (172.17.0.1)
+				redisHost = "host.docker.internal"
+			}
+			envVars["REDIS_HOST"] = redisHost
+		}
+		if _, ok := envVars["REDIS_PORT"]; !ok {
+			envVars["REDIS_PORT"] = "6379"
+		}
+		
+		// Deploy agent with workflow metadata
+		agent, err = o.agentManager.DeployWithWorkflow(
+			ctx,
+			fmt.Sprintf("%s-%s", workflow.Name, step.Name),
+			step.Config.Image,
+			envVars,
+			step.Config.ResourceLimits.CPULimit,
+			step.Config.ResourceLimits.MemoryLimit,
+			false, // auto-restart
+			"",    // token
+			nil,   // ports
+			nil,   // volumes
+			nil,   // health check
+			workflow.ID,
+			step.ID,
+			taskID,
+			workflow.Metadata,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to deploy agent: %w", err)
+		}
 
-	// Add job to workflow
-	if err := o.workflowManager.AddJobToWorkflow(ctx, workflow.ID, agent.ID); err != nil {
-		return fmt.Errorf("failed to add job to workflow: %w", err)
-	}
+		// Add job to workflow
+		if err := o.workflowManager.AddJobToWorkflow(ctx, workflow.ID, agent.ID); err != nil {
+			return fmt.Errorf("failed to add job to workflow: %w", err)
+		}
 
-	// Start the agent
-	if err := o.agentManager.Start(ctx, agent.ID); err != nil {
-		return fmt.Errorf("failed to start agent: %w", err)
+		// Start the agent
+		if err := o.agentManager.Start(ctx, agent.ID); err != nil {
+			return fmt.Errorf("failed to start agent: %w", err)
+		}
+		
+		// Store agent ID for potential retries
+		if step.Metadata == nil {
+			step.Metadata = make(map[string]string)
+		}
+		step.Metadata["agent_id"] = agent.ID
+		step.Metadata["task_id"] = taskID
+	} else {
+		// Restart the existing agent for retry
+		if agent.Status == "stopped" || agent.Status == "failed" {
+			if err := o.agentManager.Start(ctx, agent.ID); err != nil {
+				log.Printf("Failed to restart agent %s: %v", agent.ID, err)
+				// Clear the metadata so we create a new agent
+				delete(step.Metadata, "agent_id")
+				delete(step.Metadata, "task_id")
+				return fmt.Errorf("failed to restart agent for retry: %w", err)
+			}
+		}
 	}
 
 	// Mark step as running
@@ -410,9 +589,21 @@ func (o *Orchestrator) executeSequentialStep(ctx context.Context, workflow *Work
 		step.Status = StepStatusFailed
 		now := time.Now()
 		step.CompletedAt = &now
+		step.Error = err.Error()
 		o.workflowManager.SaveWorkflow(ctx, workflow)
 		o.metricsCollector.RecordStepError(workflow.ID, step.ID, err)
 		o.metricsCollector.RecordStepComplete(workflow.ID, step.ID, StepStatusFailed, agent.ID, false)
+		
+		// Only clean up if we won't retry
+		willRetry := o.shouldRetryStep(step)
+		if !willRetry && o.shouldCleanupAgent(workflow, step, true) {
+			if removeErr := o.agentManager.Remove(ctx, agent.ID); removeErr != nil {
+				log.Printf("Warning: failed to remove agent %s after failure: %v", agent.ID, removeErr)
+			}
+		} else if willRetry {
+			log.Printf("Keeping agent %s for retry attempt", agent.ID)
+		}
+		
 		return err
 	}
 	
@@ -438,6 +629,13 @@ func (o *Orchestrator) executeSequentialStep(ctx context.Context, workflow *Work
 	
 	// Record step completion
 	o.metricsCollector.RecordStepComplete(workflow.ID, step.ID, StepStatusCompleted, agent.ID, false)
+	
+	// Clean up the agent based on workflow policy
+	if o.shouldCleanupAgent(workflow, step, false) {
+		if err := o.agentManager.Remove(ctx, agent.ID); err != nil {
+			log.Printf("Warning: failed to remove agent %s after task completion: %v", agent.ID, err)
+		}
+	}
 	
 	return nil
 }
@@ -829,10 +1027,13 @@ func (o *Orchestrator) executePooledParallelStep(ctx context.Context, workflow *
 		}
 	}
 
-	// Clean up agents - agents will auto-terminate after task completion
-	for _, agentID := range agentIDs {
-		if err := o.agentManager.Stop(ctx, agentID); err != nil {
-			log.Printf("Warning: failed to stop agent %s: %v", agentID, err)
+	// Clean up agents based on workflow policy
+	stepFailed := len(allErrors) > 0
+	if o.shouldCleanupAgent(workflow, step, stepFailed) {
+		for _, agentID := range agentIDs {
+			if err := o.agentManager.Remove(ctx, agentID); err != nil {
+				log.Printf("Warning: failed to remove agent %s: %v", agentID, err)
+			}
 		}
 	}
 
@@ -992,6 +1193,9 @@ func (o *Orchestrator) executeMapStep(ctx context.Context, workflow *Workflow, s
 				envVars["STEP_ID"] = step.ID
 				envVars["MAP_INDEX"] = fmt.Sprintf("%d", itemIndex)
 				
+				// Log env vars for debugging
+				log.Printf("Map task %s env vars: %+v", taskID, envVars)
+				
 				// Set Redis host
 				redisHost := os.Getenv("AGENTAINER_REDIS_HOST")
 				if redisHost == "" {
@@ -1000,18 +1204,31 @@ func (o *Orchestrator) executeMapStep(ctx context.Context, workflow *Workflow, s
 				envVars["REDIS_HOST"] = redisHost
 				
 				agentName := fmt.Sprintf("%s-%s-map-%d", workflow.Name, step.Name, itemIndex)
-				_, err := o.agentManager.Deploy(
+				
+				// Get resource limits with defaults
+				cpuLimit := int64(500000000)  // Default 0.5 CPU
+				memLimit := int64(268435456)  // Default 256MB
+				if step.Config.ResourceLimits != nil {
+					cpuLimit = step.Config.ResourceLimits.CPULimit
+					memLimit = step.Config.ResourceLimits.MemoryLimit
+				}
+				
+				agent, err := o.agentManager.DeployWithWorkflow(
 					ctx,
 					agentName,
 					step.Config.Image,
 					envVars,
-					step.Config.ResourceLimits.CPULimit,
-					step.Config.ResourceLimits.MemoryLimit,
+					cpuLimit,
+					memLimit,
 					false, // auto-restart
 					"",    // token
 					nil,   // ports
 					nil,   // volumes
 					nil,   // health check
+					workflow.ID,
+					step.ID,
+					taskID,
+					workflow.Metadata,
 				)
 				
 				if err != nil {
@@ -1025,18 +1242,48 @@ func (o *Orchestrator) executeMapStep(ctx context.Context, workflow *Workflow, s
 					continue
 				}
 				
-				// Wait for task completion
-				result, err := o.waitForTaskCompletion(ctx, taskID, agentName, 5*time.Minute)
-				if err != nil {
-					log.Printf("Map item %d failed: %v", itemIndex, err)
+				// Add job to workflow
+				if err := o.workflowManager.AddJobToWorkflow(ctx, workflow.ID, agent.ID); err != nil {
+					log.Printf("Warning: failed to add job to workflow: %v", err)
+				}
+				
+				// Start the agent
+				if err := o.agentManager.Start(ctx, agent.ID); err != nil {
+					log.Printf("Failed to start agent for map item %d: %v", itemIndex, err)
 					if mapConfig.ErrorHandling == "fail_fast" {
-						errorChan <- fmt.Errorf("map item %d failed: %w", itemIndex, err)
+						errorChan <- fmt.Errorf("failed to start agent: %w", err)
+						return
+					}
+					// Update map state for failed item
+					o.updateMapItemState(ctx, workflow.ID, step.ID, itemIndex, nil, err)
+					continue
+				}
+				
+				// Wait for task completion
+				result, taskErr := o.waitForTaskCompletion(ctx, taskID, agent.ID, 5*time.Minute)
+				if taskErr != nil {
+					log.Printf("Map item %d failed: %v", itemIndex, taskErr)
+					if mapConfig.ErrorHandling == "fail_fast" {
+						errorChan <- fmt.Errorf("map item %d failed: %w", itemIndex, taskErr)
+						// Clean up the agent based on policy before returning
+						if o.shouldCleanupAgent(workflow, step, true) {
+							if removeErr := o.agentManager.Remove(ctx, agent.ID); removeErr != nil {
+								log.Printf("Warning: failed to remove map agent %s: %v", agent.ID, removeErr)
+							}
+						}
 						return
 					}
 				}
 				
 				// Update map state for completed item
-				o.updateMapItemState(ctx, workflow.ID, step.ID, itemIndex, result, err)
+				o.updateMapItemState(ctx, workflow.ID, step.ID, itemIndex, result, taskErr)
+				
+				// Clean up the map agent based on workflow policy
+				if o.shouldCleanupAgent(workflow, step, taskErr != nil) {
+					if err := o.agentManager.Remove(ctx, agent.ID); err != nil {
+						log.Printf("Warning: failed to remove map agent %s after task completion: %v", agent.ID, err)
+					}
+				}
 			}
 		}(w)
 	}
@@ -1187,6 +1434,14 @@ func (o *Orchestrator) executeReduceStep(ctx context.Context, workflow *Workflow
 		o.workflowManager.SaveWorkflow(ctx, workflow)
 		o.metricsCollector.RecordStepError(workflow.ID, step.ID, err)
 		o.metricsCollector.RecordStepComplete(workflow.ID, step.ID, StepStatusFailed, agent.ID, false)
+		
+		// Clean up the reducer agent based on workflow policy
+		if o.shouldCleanupAgent(workflow, step, true) {
+			if removeErr := o.agentManager.Remove(ctx, agent.ID); removeErr != nil {
+				log.Printf("Warning: failed to remove reducer agent %s after failure: %v", agent.ID, removeErr)
+			}
+		}
+		
 		return err
 	}
 	
@@ -1210,6 +1465,13 @@ func (o *Orchestrator) executeReduceStep(ctx context.Context, workflow *Workflow
 	
 	// Record step completion
 	o.metricsCollector.RecordStepComplete(workflow.ID, step.ID, StepStatusCompleted, agent.ID, false)
+	
+	// Clean up the reducer agent based on workflow policy
+	if o.shouldCleanupAgent(workflow, step, false) {
+		if err := o.agentManager.Remove(ctx, agent.ID); err != nil {
+			log.Printf("Warning: failed to remove reducer agent %s after task completion: %v", agent.ID, err)
+		}
+	}
 	
 	return nil
 }

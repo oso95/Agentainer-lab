@@ -1,0 +1,15 @@
+# API key files
+*.env
+
+# Analysis results
+analysis_results_*/
+
+# Copied files (maintained by setup.sh)
+doc-extractor/urls.txt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store

@@ -1,4 +1,0 @@
-# Test with just 3 URLs for debugging
-https://techcrunch.com/2025/08/02/tim-cook-reportedly-tells-employees-apple-must-win-in-ai/
-https://www.theguardian.com/technology/2025/08/02/big-tech-ai-spending
-https://techcrunch.com/2025/08/01/google-rolls-out-gemini-deep-think-ai-a-reasoning-model-that-tests-multiple-ideas-in-parallel/
