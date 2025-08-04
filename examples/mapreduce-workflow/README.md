@@ -1,257 +1,311 @@
-# MapReduce Word Counter Workflow
+# MapReduce Word Counter Example
 
-A production-ready example demonstrating Agentainer's MapReduce pattern for parallel URL processing with automatic retry, error handling, and comprehensive reporting.
+This example demonstrates how to use Agentainer's MapReduce pattern to process multiple URLs in parallel with automatic retry support, error handling, and resource management.
 
-## 🎯 What This Example Does
+## Overview
 
-This workflow analyzes multiple web pages in parallel to:
-1. Extract and count words from each URL
-2. Find the most common words per page
-3. Aggregate results into comprehensive statistics
-4. Export results in multiple formats (JSON, CSV, Markdown)
+The workflow consists of three phases:
+1. **List Phase**: Generate a list of URLs to process (with retry support)
+2. **Map Phase**: Process each URL in parallel, counting words (with exponential backoff retry)
+3. **Reduce Phase**: Aggregate results from all mappers (handles partial failures)
 
-## 🏗️ Architecture
+## Features Demonstrated
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  List Phase │ --> │  Map Phase  │ --> │Reduce Phase │
-│ (Sequential)│     │  (Parallel) │     │(Sequential) │
-└─────────────┘     └─────────────┘     └─────────────┘
-      |                    |                    |
-   urls.txt          Process URLs         Final Report
-```
+- **Automatic Retry**: Failed tasks are automatically retried with configurable backoff
+- **Error Resilience**: Continues processing even if some URLs fail
+- **Resource Limits**: Each mapper has CPU and memory constraints
+- **Agent Cleanup**: Failed agents are kept for debugging (`on_success` policy)
+- **Comprehensive Monitoring**: Detailed progress and error reporting
 
-### Phase Details
+## Agent Cleanup Policy
 
-1. **List Phase** (`mapper.py` with `STEP_TYPE=list`)
-   - Reads URLs from `urls.txt` or environment
-   - Validates and prepares URLs for processing
-   - Stores URL list in Redis workflow state
+By default, Agentainer automatically removes agents after their tasks complete to prevent accumulation of stopped containers. You can control this behavior using the `cleanup_policy` in your workflow configuration:
 
-2. **Map Phase** (`mapper.py` with `STEP_TYPE=map`)
-   - Agentainer creates parallel tasks for each URL
-   - Each mapper fetches and analyzes one URL
-   - Extracts text, counts words, finds top words
-   - Handles retries for failed requests
-   - Results stored in Redis lists
+- **`always`** (default): Always remove agents after task completion
+- **`on_success`**: Only remove agents if the task succeeded (keep failed agents for debugging)
+- **`never`**: Never automatically remove agents (manual cleanup required)
 
-3. **Reduce Phase** (`reducer.py`)
-   - Aggregates all mapper results
-   - Calculates total statistics
-   - Creates final summary and reports
+### Interaction with Retry Policies
 
-## 🚀 Quick Start
+When a step has a retry policy configured and fails:
+1. The agent is **NOT** immediately removed, regardless of cleanup policy
+2. The agent is kept for potential retry attempts
+3. Only after all retry attempts are exhausted will the cleanup policy be applied
 
-### Prerequisites
-1. **Docker Desktop** running
-2. **Agentainer server** running: `./agentainer server`
-3. **Redis** running (auto-started by Agentainer)
-
-### Run the Example
-
-```bash
-# 1. Build Docker images
-./build.sh
-
-# 2. Add URLs to analyze (optional - defaults provided)
-echo "https://example.com" >> urls.txt
-
-# 3. Run the workflow
-python3 run_workflow_api.py
+Example:
+```yaml
+steps:
+  - name: process-data
+    image: processor:latest
+    config:
+      retry_policy:
+        max_attempts: 3
+        backoff: exponential
+        delay: 5s
 ```
 
-## 📝 Configuration
+In this case, even with `cleanup_policy: always`, a failed agent will be kept until all 3 retry attempts are exhausted.
 
-### Input URLs (`urls.txt`)
+## Retry Policies
+
+Agentainer supports automatic retry of failed steps with configurable backoff strategies:
+
+### Configuration
+
+Add a `retry_policy` to any step configuration:
+
+```yaml
+steps:
+  - name: unreliable-service
+    image: processor:latest
+    config:
+      retry_policy:
+        max_attempts: 3        # Total attempts (including initial)
+        backoff: exponential   # Backoff strategy
+        delay: 5s             # Base delay between retries
+```
+
+### Backoff Strategies
+
+- **`constant`**: Fixed delay between retries (e.g., 5s, 5s, 5s)
+- **`linear`**: Linear increase (e.g., 5s, 10s, 15s)
+- **`exponential`**: Exponential increase (e.g., 5s, 10s, 20s)
+
+### How It Works
+
+1. When a step fails, Agentainer checks if a retry policy is configured
+2. If retries remain, the agent is kept alive (not cleaned up)
+3. After the backoff delay, the agent is restarted for the retry attempt
+4. The process repeats until success or max attempts are exhausted
+5. Only after all retries fail is the cleanup policy applied
+
+### Example with MapReduce
+
+The included workflow.yaml shows retry configuration for the map step:
+- If a URL processing fails, it will retry up to 3 times
+- Uses exponential backoff starting at 2 seconds
+- Failed agents are kept for retry attempts
+
+## Test URLs
+
+The demo includes various URLs to demonstrate different scenarios:
+- **Normal URLs**: example.com, wikipedia.org - Process successfully
+- **Timeout URL**: `/delay/3` - May timeout on first attempt
+- **Server Errors**: `/status/500` - Fails initially, may succeed on retry
+- **Rate Limited**: `/status/429` - Triggers retry with backoff
+- **Various Content**: HTML, JSON, plain text, base64 encoded
+
+This mix demonstrates how the retry mechanism handles different failure types.
+
+## Prerequisites
+
+1. Docker Desktop installed and running
+2. Agentainer built and server running
+3. Python 3.x (uses only standard library modules)
+
+## Providing URLs
+
+Create a `urls.txt` file with URLs to analyze (one per line):
+
 ```text
 # URLs to process - one per line
 # Lines starting with # are ignored
 
 https://example.com
-https://techcrunch.com/article-url
+https://www.wikipedia.org
+https://www.python.org
+
+# Test various content types
+https://httpbin.org/html
+https://httpbin.org/json
+
+# Add your own URLs below:
 https://your-site.com
 ```
 
-### Command Line Options
+## Building the Images
+
 ```bash
-# Use custom URLs file
-python3 run_workflow_api.py --urls myurls.txt
+# Build mapper image
+docker build -f Dockerfile.mapper -t mapreduce-mapper:latest .
 
-# Specify output directory
-python3 run_workflow_api.py --output results_dir
-
-# Skip CSV/detailed exports
-python3 run_workflow_api.py --no-export
+# Build reducer image  
+docker build -f Dockerfile.reducer -t mapreduce-reducer:latest .
 ```
 
-## 🔧 Key Features
+Or use the provided build script:
+```bash
+./build.sh
+```
 
-### 1. Automatic Retry
-Failed tasks retry with configurable backoff:
-- **List phase**: 2 attempts, constant backoff
-- **Map phase**: 3 attempts, exponential backoff
-- **Reduce phase**: 2 attempts, linear backoff
+## Running the Workflow
 
-### 2. Error Resilience
-- Continues processing even if some URLs fail
-- Failed URLs tracked separately in `map_errors.json`
-- Success rate calculated in final report
+### Prerequisites
 
-### 3. Resource Management
-- CPU limits: 0.5 CPU per mapper, 1 CPU for reducer
-- Memory limits: 256MB per mapper, 512MB for reducer
-- Max 5 concurrent mappers
-
-### 4. Agent Cleanup
-- `cleanup_policy: "on_success"` - keeps failed agents for debugging
-- Failed agents preserved until retry attempts exhausted
-- Successful agents cleaned up automatically
-
-## 📊 Output Files
-
-Results are saved to timestamped directory: `mapreduce_results_YYYYMMDD_HHMMSS/`
-
-### Core Outputs
-| File | Description |
-|------|-------------|
-| `workflow_config.json` | Complete workflow configuration |
-| `workflow_metadata.json` | Workflow ID and timestamp |
-| `input_urls.json` | URLs that were processed |
-| `generated_urls.json` | URLs prepared by list phase |
-| `map_results.json` | Detailed results from each URL |
-| `map_errors.json` | Information about failed URLs |
-| `final_summary.json` | Aggregated statistics |
-| `FINAL_REPORT.md` | Human-readable summary |
-
-### Per-URL Outputs
-| File | Description |
-|------|-------------|
-| `wordcount_<url>.json` | Word statistics for each URL |
-
-### Export Formats
-| File | Description |
-|------|-------------|
-| `word_frequencies.csv` | Top words with counts and percentages |
-| `url_performance.csv` | Response times and word counts per URL |
-| `DETAILED_ANALYSIS.md` | Comprehensive analysis report |
-
-## 🐛 Debugging
-
-### Common Issues
-
-1. **"Cannot connect to Docker"**
+1. **Start Docker Desktop** - Required for running containers
+2. **Start Agentainer Server** (from repository root):
    ```bash
-   # Ensure Docker Desktop is running
-   docker info
-   ```
-
-2. **"Connection refused :8081"**
-   ```bash
-   # Start Agentainer server from repo root
+   # Build Agentainer if not already built
+   go build -o agentainer ./cmd/agentainer/
+   
+   # Start the server
    ./agentainer server
    ```
-
-3. **"No such image: mapreduce-mapper"**
+3. **Build the Docker images**:
    ```bash
-   # Build images first
    ./build.sh
    ```
 
-### Monitoring Tools
+### Method 1: Using the Python API Script (Recommended)
+
+1. **Create your URLs file** (or use the provided example):
+   ```bash
+   # Edit urls.txt to add your URLs (one per line)
+   nano urls.txt
+   ```
+
+2. **Run the workflow**:
+   ```bash
+   # Run with default urls.txt
+   python3 run_workflow_api.py
+   
+   # Specify a different URLs file
+   python3 run_workflow_api.py --urls myurls.txt
+   
+   # Specify output directory
+   python3 run_workflow_api.py --output my_results
+   
+   # Skip additional export formats
+   python3 run_workflow_api.py --no-export
+   ```
+
+This script:
+- Loads URLs from `urls.txt` (one URL per line)
+- Uses Agentainer's HTTP API directly (no SDK required)
+- Creates the workflow configuration programmatically
+- Monitors progress in real-time
+- Saves detailed results and reports
+- Shows retry attempts and failures
+
+### Method 2: Using Agentainer CLI Directly
 
 ```bash
-# View workflow status
-curl http://localhost:8081/workflows/<workflow-id>
+# Start Agentainer server (if not already running)
+agentainer server
 
-# Check Redis state
-redis-cli HGETALL workflow:<workflow-id>:state
+# Create workflow from YAML file
+agentainer workflow create -f workflow.yaml
 
-# View mapper logs
-docker logs <container-id>
-
-# List workflow agents
-agentainer list --workflow <workflow-id>
+# Or create workflow manually
+agentainer workflow create \
+  --name mapreduce-word-counter \
+  --steps '[
+    {
+      "name": "list-urls",
+      "image": "mapreduce-mapper:latest",
+      "env": {"STEP_TYPE": "list"}
+    },
+    {
+      "name": "process-urls",
+      "type": "map",
+      "map_config": {"items_from": "urls", "max_parallel": 5},
+      "image": "mapreduce-mapper:latest",
+      "env": {"STEP_TYPE": "map"}
+    },
+    {
+      "name": "aggregate-results",
+      "image": "mapreduce-reducer:latest",
+      "depends_on": ["process-urls"]
+    }
+  ]'
 ```
 
-## 🔬 Technical Details
+### Method 4: Using the API
 
-### State Management
-All state stored in Redis with these key patterns:
-- `workflow:{id}:state` - Main workflow state hash
-- `workflow:{id}:state:list:{key}` - List data (map results)
-- `task:{id}:result` - Individual task results
-- `task:{id}:complete` - Completion notifications (pub/sub)
-
-### Task Communication
-1. Mapper writes result to `task:{id}:result`
-2. Publishes to `task:{id}:complete` channel
-3. Orchestrator detects completion via pub/sub
-4. Reducer reads all results from Redis lists
-
-### Map Step Configuration
-```python
-"map_config": {
-    "input_path": "urls",        # Array from workflow state
-    "item_alias": "current_url", # Variable name in task
-    "max_concurrency": 5,        # Parallel limit
-    "error_handling": "continue_on_error"
-}
+```bash
+# Create workflow from configuration
+curl -X POST http://localhost:8080/api/v1/workflows \
+  -H "Authorization: Bearer ${AGENTAINER_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d @workflow.yaml
 ```
 
-## 🎨 Customization
+## Monitoring Progress
 
-### Modify Processing Logic
-Edit `mapper.py` to change what's analyzed:
-```python
-def map_phase():
-    # Your custom processing logic
-    url = workflow_state.get("current_url")
-    # Process URL...
-    result = {"your": "data"}
-    append_to_list("map_results", result)
+```bash
+# Get workflow status
+agentainer workflow get <workflow-id>
+
+# List all jobs in the workflow
+agentainer workflow jobs <workflow-id>
+
+# View logs from a specific agent
+agentainer logs <agent-id>
 ```
 
-### Change Aggregation
-Edit `reducer.py` to modify how results are combined:
-```python
-def aggregate_results():
-    # Your custom aggregation logic
-    for result in results:
-        # Aggregate...
+## How It Works
+
+1. **List Phase**: The mapper with `STEP_TYPE=list` generates a list of URLs and stores them in workflow state
+
+2. **Map Phase**: Multiple mapper instances (with `STEP_TYPE=map`) run in parallel:
+   - Each mapper processes one URL
+   - Counts words and finds most common words
+   - Stores results in workflow state
+
+3. **Reduce Phase**: The reducer aggregates all results:
+   - Calculates total words across all URLs
+   - Finds the most common words overall
+   - Generates a final summary
+
+## Workflow State
+
+The workflow uses Redis-backed state to share data between steps:
+- `urls`: List of URLs to process
+- `map_results`: Results from each mapper
+- `map_errors`: Any errors encountered
+- `final_summary`: Aggregated results
+
+## Performance Benefits
+
+With agent pooling enabled:
+- Mappers start in ~0.1s instead of 2-5s
+- 5 URLs can be processed by 3 pooled agents
+- 20-50x performance improvement for parallel tasks
+
+## Exported Results
+
+The workflow exports comprehensive results to a timestamped directory:
+
+### Core Results
+- `generated_urls.json` - List of URLs that were processed
+- `map_results.json` - Detailed word count results from each URL
+- `map_errors.json` - Information about failed URL processing
+- `final_summary.json` - Aggregated statistics and analysis
+- `FINAL_REPORT.md` - Human-readable summary report
+
+### Individual URL Results
+- `wordcount_<url>.json` - Word count details for each successful URL
+  - Word count
+  - Unique words
+  - Top words
+  - Response time
+
+### Additional Exports (automatic)
+The workflow automatically exports these additional formats:
+- `word_frequencies.csv` - Word frequency data in CSV format
+- `url_performance.csv` - Performance metrics for each URL
+- `DETAILED_ANALYSIS.md` - Comprehensive analysis with statistics
+
+To skip automatic export of additional formats, use:
+```bash
+python3 run_workflow_api.py --no-export
 ```
 
-### Add New Metrics
-Extend the result dictionaries to include:
-- Sentiment analysis
-- Link extraction
-- Image counting
-- Response headers
-- Custom analytics
+## Customization
 
-## 📚 Learning Resources
+You can modify the mapper to:
+- Process different types of data (files, API endpoints, etc.)
+- Perform different computations (image processing, data transformation, etc.)
+- Handle more complex aggregation logic
 
-### Key Files to Study
-1. `run_workflow_api.py` - Workflow orchestration
-2. `mapper.py` - List and map phase implementation
-3. `reducer.py` - Aggregation logic
-
-### Concepts Demonstrated
-- Dynamic parallel task creation
-- Redis-based state sharing
-- Retry mechanisms with backoff
-- Error handling and resilience
-- Resource constraints
-- Result aggregation patterns
-
-## 🤝 Contributing
-
-To improve this example:
-1. Add more sophisticated text analysis
-2. Implement different retry strategies
-3. Add more export formats
-4. Create visualizations of results
-5. Add unit tests
-
-## 📄 License
-
-This example is part of the Agentainer project and follows the same license terms.
+The pattern remains the same: list → parallel map → reduce.
