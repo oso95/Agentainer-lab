@@ -349,37 +349,77 @@ class MultiURLWorkflow:
         """Save results from completed workflow steps"""
         step_id = step["id"]
         
-        # Get results from Redis based on step type
+        # First try to get from Redis, then check workflow state
+        def get_state_data(key):
+            # Try Redis first
+            data = self.get_workflow_state(workflow_id, key)
+            if data:
+                return data
+            
+            # If not in Redis, check if it's in the workflow's state field
+            try:
+                response = requests.get(
+                    f"{self.api_url}/workflows/{workflow_id}",
+                    headers=self.headers,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    workflow = response.json()["data"]
+                    state = workflow.get("state", {})
+                    return state.get(key)
+            except:
+                pass
+            return None
+        
+        # Get results based on step type
         if step_id == "process":
             # Save individual URL processing results
-            # Get the URL results from the map state
-            process_results = self.get_workflow_state(workflow_id, "process_results")
+            process_results = get_state_data("process_results") or get_state_data("individual_results")
             if process_results and isinstance(process_results, list):
                 self.save_json("url_processing_results.json", process_results)
                 
-            # Also save individual content files
-            for i in range(10):  # Check up to 10 URLs
-                url_result = self.get_workflow_state(workflow_id, f"result_url_{i}")
-                if url_result:
-                    # Save URL result regardless of status
-                    self.save_json(f"url_{i}_metadata.json", url_result)
-                    
-                    if url_result.get("status") == "success":
-                        # Save the full content for successful URLs
-                        content = self.get_workflow_state(workflow_id, f"content_url_{i}")
-                        if content:
-                            self.save_text(f"url_{i}_content.txt", content)
-                    else:
-                        # Save error information for failed URLs
-                        error_info = f"# URL {i} Failed\n\n"
-                        error_info += f"URL: {url_result.get('url', 'Unknown')}\n"
-                        error_info += f"Error: {url_result.get('error', 'Unknown error')}\n"
-                        error_info += f"Status: {url_result.get('status', 'failed')}\n"
-                        self.save_text(f"url_{i}_error.txt", error_info)
+                # Save individual URL content files
+                for idx, result in enumerate(process_results):
+                    if isinstance(result, dict):
+                        self.save_json(f"url_{idx}_metadata.json", result)
+                        
+                        # Extract and save content if available
+                        if result.get("status") == "success" and "content" in result:
+                            self.save_text(f"url_{idx}_content.txt", result["content"])
+                        elif result.get("status") == "failed":
+                            error_info = f"# URL {idx} Failed\n\n"
+                            error_info += f"URL: {result.get('url', 'Unknown')}\n"
+                            error_info += f"Error: {result.get('error', 'Unknown error')}\n"
+                            self.save_text(f"url_{idx}_error.txt", error_info)
                             
         elif step_id == "aggregate":
-            # Save aggregated results
-            results = self.get_workflow_state(workflow_id, "aggregated_results")
+            # First check if aggregated results exist as a separate key
+            results = get_state_data("aggregated_results")
+            
+            # If not found, extract from workflow state
+            if not results:
+                try:
+                    response = requests.get(
+                        f"{self.api_url}/workflows/{workflow_id}",
+                        headers=self.headers,
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        workflow = response.json()["data"]
+                        state = workflow.get("state", {})
+                        # Extract aggregation data from state
+                        results = {
+                            "total_urls": state.get("total_urls", 0),
+                            "successful": state.get("successful", 0),
+                            "failed": state.get("failed", 0),
+                            "total_words_analyzed": state.get("total_words_analyzed", 0),
+                            "average_words_per_article": state.get("average_words_per_article", 0),
+                            "unique_domains": state.get("unique_domains", []),
+                            "articles_analyzed": state.get("articles_analyzed", 0)
+                        }
+                except:
+                    pass
+            
             if results:
                 self.save_json("aggregated_results.json", results)
                 
@@ -400,26 +440,35 @@ class MultiURLWorkflow:
         
         elif step_id == "entities":
             # Save entity extraction results
-            entities = self.get_workflow_state(workflow_id, "extracted_entities_multi")
+            entities = get_state_data("extracted_entities_multi") or get_state_data("entities")
             if entities:
                 self.save_json("entities_all_articles.json", entities)
-                if isinstance(entities, dict) and "entities" in entities:
+                # Check if entities is a string (direct content) or dict
+                if isinstance(entities, str):
+                    self.save_text("entities.md", f"# Extracted Entities\n\n{entities}")
+                elif isinstance(entities, dict) and "entities" in entities:
                     self.save_text("entities.md", f"# Extracted Entities\n\n{entities['entities']}")
         
         elif step_id == "insights":
             # Save insights
-            insights = self.get_workflow_state(workflow_id, "insights_multi")
+            insights = get_state_data("insights_multi") or get_state_data("insights")
             if insights:
                 self.save_json("cross_article_insights.json", insights)
-                if isinstance(insights, dict) and "insights" in insights:
+                # Check if insights is a string (direct content) or dict
+                if isinstance(insights, str):
+                    self.save_text("insights.md", f"# Cross-Article Insights\n\n{insights}")
+                elif isinstance(insights, dict) and "insights" in insights:
                     self.save_text("insights.md", f"# Cross-Article Insights\n\n{insights['insights']}")
         
         elif step_id == "report":
             # Save final report
-            report = self.get_workflow_state(workflow_id, "final_report_multi")
+            report = get_state_data("final_report_multi") or get_state_data("final_report")
             if report:
                 self.save_json("final_report.json", report)
-                if isinstance(report, dict) and "final_report" in report:
+                # Check if report is a string (direct content) or dict
+                if isinstance(report, str):
+                    self.save_text("FINAL_REPORT.md", report)
+                elif isinstance(report, dict) and "final_report" in report:
                     self.save_text("FINAL_REPORT.md", report["final_report"])
     
     def get_workflow_state(self, workflow_id: str, key: str):

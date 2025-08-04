@@ -316,9 +316,31 @@ class MapReduceWorkflow:
         """Save results from completed workflow steps"""
         step_id = step["id"]
         
+        # Helper function to get data from workflow state
+        def get_state_data(key):
+            # Try Redis first
+            data = self.get_workflow_state(workflow_id, key)
+            if data:
+                return data
+            
+            # If not in Redis, get from workflow state via API
+            try:
+                response = requests.get(
+                    f"{self.api_url}/workflows/{workflow_id}",
+                    headers=self.headers,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    workflow = response.json()["data"]
+                    state = workflow.get("state", {})
+                    return state.get(key)
+            except:
+                pass
+            return None
+        
         if step_id == "list":
             # Save generated URLs
-            urls = self.get_workflow_state(workflow_id, "urls")
+            urls = get_state_data("urls")
             if urls:
                 self.save_json("generated_urls.json", urls)
                 print(f"\n   💾 Saved: {len(urls)} URLs to process")
@@ -328,26 +350,32 @@ class MapReduceWorkflow:
             map_results = []
             map_errors = []
             
-            if self.redis_client:
-                # Get results from Redis lists
-                results_key = f"workflow:{workflow_id}:state:list:map_results"
-                errors_key = f"workflow:{workflow_id}:state:list:map_errors"
-                
-                # Get all results
-                all_results = self.redis_client.lrange(results_key, 0, -1)
-                for result in all_results:
-                    try:
-                        map_results.append(json.loads(result))
-                    except:
-                        pass
-                
-                # Get all errors
-                all_errors = self.redis_client.lrange(errors_key, 0, -1)
-                for error in all_errors:
-                    try:
-                        map_errors.append(json.loads(error))
-                    except:
-                        pass
+            # Try to get from workflow state
+            process_results = get_state_data("process_results")
+            if process_results and isinstance(process_results, list):
+                map_results = process_results
+            else:
+                # Try individual keys if process_results not found
+                if self.redis_client:
+                    # Get results from Redis lists
+                    results_key = f"workflow:{workflow_id}:state:list:map_results"
+                    errors_key = f"workflow:{workflow_id}:state:list:map_errors"
+                    
+                    # Get all results
+                    all_results = self.redis_client.lrange(results_key, 0, -1)
+                    for result in all_results:
+                        try:
+                            map_results.append(json.loads(result))
+                        except:
+                            pass
+                    
+                    # Get all errors
+                    all_errors = self.redis_client.lrange(errors_key, 0, -1)
+                    for error in all_errors:
+                        try:
+                            map_errors.append(json.loads(error))
+                        except:
+                            pass
             
             if map_results:
                 self.save_json("map_results.json", map_results)
@@ -355,16 +383,17 @@ class MapReduceWorkflow:
                 
                 # Save individual URL word counts
                 for i, result in enumerate(map_results):
-                    url = result.get('url', 'unknown')
-                    # Create a safe filename from URL
-                    safe_name = url.replace('https://', '').replace('http://', '').replace('/', '_').replace(':', '_')
-                    self.save_json(f"wordcount_{safe_name}.json", {
-                        "url": url,
-                        "word_count": result.get('word_count', 0),
-                        "unique_words": result.get('unique_words', 0),
-                        "top_words": result.get('top_words', {}),
-                        "response_time": result.get('response_time', 0)
-                    })
+                    if result and isinstance(result, dict):
+                        url = result.get('url', 'unknown')
+                        # Create a safe filename from URL
+                        safe_name = url.replace('https://', '').replace('http://', '').replace('/', '_').replace(':', '_')
+                        self.save_json(f"wordcount_{safe_name}.json", {
+                            "url": url,
+                            "word_count": result.get('word_count', 0),
+                            "unique_words": result.get('unique_words', 0),
+                            "top_words": result.get('top_words', {}),
+                            "response_time": result.get('response_time', 0)
+                        })
             
             if map_errors:
                 self.save_json("map_errors.json", map_errors)
@@ -372,7 +401,7 @@ class MapReduceWorkflow:
         
         elif step_id == "aggregate":
             # Save final summary
-            summary = self.get_workflow_state(workflow_id, "final_summary")
+            summary = get_state_data("final_summary")
             if summary:
                 self.save_json("final_summary.json", summary)
                 
