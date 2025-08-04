@@ -8,6 +8,11 @@ Welcome to the Agentainer documentation! This directory contains detailed guides
 - **[Deployment Guide](./DEPLOYMENT_GUIDE.md)** - Learn how to deploy agents using various methods
 - **[Building Resilient Agents](./RESILIENT_AGENTS.md)** - Patterns for building production-ready agents
 
+### Core Components
+- **[Agentainer Flow](./AGENTAINER_FLOW.md)** - Workflow orchestration overview
+- **[Orchestrator](./ORCHESTRATOR.md)** - Detailed orchestration engine documentation
+- **[Workflow Architecture](./WORKFLOW_ARCHITECTURE.md)** - How workflows manage agent containers
+
 ### Reference
 - **[CLI Reference](./CLI_REFERENCE.md)** - Complete command-line interface documentation
 - **[API Endpoints](./API_ENDPOINTS.md)** - REST API reference for programmatic access
