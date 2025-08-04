@@ -32,8 +32,15 @@ class MultiURLWorkflow:
         
         # Output directory for results
         if output_dir is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = f"analysis_results_{timestamp}"
+            # Check if running in container
+            if os.path.exists('/output'):
+                # Container environment - use mounted output directory
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_dir = f"/output/analysis_results_{timestamp}"
+            else:
+                # Host environment
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_dir = f"analysis_results_{timestamp}"
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -45,7 +52,9 @@ class MultiURLWorkflow:
         }
         
         # Redis client for accessing workflow state
-        self.redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        redis_host = os.getenv('REDIS_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_PORT', '6379'))
+        self.redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
         
         print(f"📁 Results will be saved to: {os.path.abspath(self.output_dir)}")
     

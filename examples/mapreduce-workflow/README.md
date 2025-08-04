@@ -2,6 +2,21 @@
 
 This example demonstrates how to use Agentainer's MapReduce pattern to process multiple URLs in parallel with automatic retry support, error handling, and resource management.
 
+## 🚀 Quick Start
+
+```bash
+# Just run this single command:
+./run.sh
+```
+
+This will:
+- Check prerequisites (Agentainer, Redis)
+- Build all Docker images
+- Run the workflow in a container
+- Save results to `results/` directory
+
+**No Python setup needed!**
+
 ## Overview
 
 The workflow consists of three phases:
@@ -100,8 +115,8 @@ This mix demonstrates how the retry mechanism handles different failure types.
 ## Prerequisites
 
 1. Docker Desktop installed and running
-2. Agentainer built and server running
-3. Python 3.x (uses only standard library modules)
+2. Agentainer server running: `make run` (from repository root)
+3. Redis running (started automatically or via `docker run -d -p 6379:6379 redis:latest`)
 
 ## Providing URLs
 
@@ -123,112 +138,45 @@ https://httpbin.org/json
 https://your-site.com
 ```
 
-## Building the Images
-
-```bash
-# Build mapper image
-docker build -f Dockerfile.mapper -t mapreduce-mapper:latest .
-
-# Build reducer image  
-docker build -f Dockerfile.reducer -t mapreduce-reducer:latest .
-```
-
-Or use the provided build script:
-```bash
-./build.sh
-```
-
 ## Running the Workflow
 
-### Prerequisites
+### Method 1: All-in-One Script (Recommended)
 
-1. **Start Docker Desktop** - Required for running containers
-2. **Start Agentainer Server** (from repository root):
-   ```bash
-   # Build Agentainer if not already built
-   go build -o agentainer ./cmd/agentainer/
-   
-   # Start the server
-   ./agentainer server
-   ```
-3. **Build the Docker images**:
-   ```bash
-   ./build.sh
-   ```
+```bash
+# Just run this:
+./run.sh
 
-### Method 1: Using the Python API Script (Recommended)
+# Or with options:
+./run.sh --urls myurls.txt
+./run.sh --output my_results
+./run.sh --no-export
+```
 
-1. **Create your URLs file** (or use the provided example):
-   ```bash
-   # Edit urls.txt to add your URLs (one per line)
-   nano urls.txt
-   ```
-
-2. **Run the workflow**:
-   ```bash
-   # Run with default urls.txt
-   python3 run_workflow_api.py
-   
-   # Specify a different URLs file
-   python3 run_workflow_api.py --urls myurls.txt
-   
-   # Specify output directory
-   python3 run_workflow_api.py --output my_results
-   
-   # Skip additional export formats
-   python3 run_workflow_api.py --no-export
-   ```
-
-This script:
-- Loads URLs from `urls.txt` (one URL per line)
-- Uses Agentainer's HTTP API directly (no SDK required)
-- Creates the workflow configuration programmatically
+The script:
+- Checks all prerequisites (Agentainer, Redis)
+- Builds all Docker images automatically
+- Runs the workflow in a container (no Python setup needed!)
 - Monitors progress in real-time
-- Saves detailed results and reports
+- Saves results to `results/` directory
 - Shows retry attempts and failures
 
-### Method 2: Using Agentainer CLI Directly
+### Method 2: Direct Python Execution (For Development)
 
 ```bash
-# Start Agentainer server (if not already running)
-agentainer server
+# 1. Build images manually
+docker build -f Dockerfile.mapper -t mapreduce-mapper:latest .
+docker build -f Dockerfile.reducer -t mapreduce-reducer:latest .
 
-# Create workflow from YAML file
-agentainer workflow create -f workflow.yaml
+# 2. Install Python dependencies
+pip install redis requests
 
-# Or create workflow manually
-agentainer workflow create \
-  --name mapreduce-word-counter \
-  --steps '[
-    {
-      "name": "list-urls",
-      "image": "mapreduce-mapper:latest",
-      "env": {"STEP_TYPE": "list"}
-    },
-    {
-      "name": "process-urls",
-      "type": "map",
-      "map_config": {"items_from": "urls", "max_parallel": 5},
-      "image": "mapreduce-mapper:latest",
-      "env": {"STEP_TYPE": "map"}
-    },
-    {
-      "name": "aggregate-results",
-      "image": "mapreduce-reducer:latest",
-      "depends_on": ["process-urls"]
-    }
-  ]'
+# 3. Run directly
+python3 run_workflow_api.py
+
+# With options:
+python3 run_workflow_api.py --urls myurls.txt --output my_results
 ```
 
-### Method 4: Using the API
-
-```bash
-# Create workflow from configuration
-curl -X POST http://localhost:8080/api/v1/workflows \
-  -H "Authorization: Bearer ${AGENTAINER_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d @workflow.yaml
-```
 
 ## Monitoring Progress
 

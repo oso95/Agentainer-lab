@@ -12,17 +12,41 @@ This example demonstrates Agentainer's map/reduce workflow orchestration for par
 
 ## Quick Start
 
+### Method 1: All-in-One Script (Recommended)
+
 ```bash
 # 1. Set up API keys
 echo "OPENAI_API_KEY=your-key-here" > gpt-workflow-agent/.env
 echo "GEMINI_API_KEY=your-key-here" > gemini-workflow-agent/.env
 
-# 2. Build Docker images
-./setup.sh
+# 2. Run everything (builds images + runs workflow in container)
+./run.sh
+```
 
-# 3. Run the workflow
+This single command:
+- Checks prerequisites
+- Builds all Docker images
+- Runs the workflow in a container
+- Saves results to `results/` directory
+
+### Method 2: Direct Python (For Development)
+
+```bash
+# 1. Set up API keys (same as above)
+
+# 2. Build images manually
+docker build -t doc-extractor:latest doc-extractor
+docker build -t gpt-workflow-agent:latest gpt-workflow-agent
+docker build -t gemini-workflow-agent:latest gemini-workflow-agent
+
+# 3. Install Python dependencies
+pip install redis requests
+
+# 4. Run directly
 python3 run_workflow.py
 ```
+
+Results will be saved to `analysis_results_*` directory.
 
 ## Architecture
 

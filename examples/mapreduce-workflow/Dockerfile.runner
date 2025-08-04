@@ -1,0 +1,22 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install required Python packages
+RUN pip install --no-cache-dir \
+    requests \
+    redis
+
+# Copy the workflow runner script
+COPY run_workflow_api.py .
+
+# Create output directory
+RUN mkdir -p /output
+
+# Set environment variables
+ENV AGENTAINER_API_URL=http://host.docker.internal:8081
+ENV REDIS_HOST=host.docker.internal
+ENV REDIS_PORT=6379
+
+# Default arguments
+CMD ["python3", "run_workflow_api.py"]

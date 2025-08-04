@@ -1,0 +1,23 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install required Python packages
+RUN pip install --no-cache-dir \
+    requests \
+    redis \
+    aiohttp
+
+# Copy the workflow runner script
+COPY run_workflow.py .
+
+# Create output directory
+RUN mkdir -p /output
+
+# Set environment variables
+ENV AGENTAINER_API_URL=http://host.docker.internal:8081
+ENV REDIS_HOST=host.docker.internal
+ENV REDIS_PORT=6379
+
+# Run the workflow
+ENTRYPOINT ["python3", "run_workflow.py"]
